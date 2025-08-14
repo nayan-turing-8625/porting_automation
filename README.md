@@ -330,3 +330,4 @@ If you want:
 * or a **local-only** mode (no Drive),
 
 ping me and I’ll include the minimal diffs or a dedicated utility script.
+Author: [nayan.k@turing.com]

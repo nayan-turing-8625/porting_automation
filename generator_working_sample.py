@@ -230,8 +230,10 @@ def main():
     tmpl_index = _index_template_rows_by_task(sheets, SPREADSHEET_ID, tmpl_name)
     log.info("Indexed %d template rows by task_id.", len(tmpl_index))
 
-    # Live porting code (latest per service)
-    code_map, meta_map = build_service_code_map_with_logs(sheets)
+    # Live porting code (latest per service) — FIXED: pass spreadsheet_id + code_sheet_name
+    code_map, meta_map = build_service_code_map_with_logs(
+        sheets, SPREADSHEET_ID, CODE_SHEET_NAME
+    )
     log.info("Prepared porting code for %d services.", len(code_map))
 
     # Generate notebooks

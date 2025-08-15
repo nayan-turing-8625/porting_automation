@@ -7,7 +7,6 @@
 #  - Output Drive folder can be a folder ID or a subfolder under MyDrive/port_automation
 #  - Output folder emptied before generation
 #  - Notebook structure and logging unchanged except for new summary columns
-# UPDATE: Inject USER_LOCATION env var (from 'user_location' column) at the top of Import DB section
 
 from __future__ import annotations
 
@@ -44,7 +43,7 @@ CODE_SHEET_NAME      = os.environ.get("CODE_SHEET_NAME", "Translate_JSONs").stri
 
 # Drive paths
 MYDRIVE_ROOT         = "/content/drive/MyDrive"
-CODEBASE_FOLDER_NAME = "porting_automation"               # codebase folder in Drive
+CODEBASE_FOLDER_NAME = "port_automation"               # codebase folder in Drive
 CODEBASE_ROOT        = os.path.join(MYDRIVE_ROOT, CODEBASE_FOLDER_NAME)
 
 # =========================
@@ -468,14 +467,7 @@ def build_import_and_port_cell(
         L.append("from notes_and_lists.SimulationEngine.utils import update_title_index, update_content_index")
         L.append("from typing import Dict, Any")
         L.append("from datetime import timezone")
-    # --- CHANGED LINE: include 'os' here so we can set USER_LOCATION
-    L += ["import os, json, uuid", "from datetime import datetime", ""]
-    # --- NEW BLOCK: USER_LOCATION injection (right after imports, before DB loads)
-    user_location = (row.get("user_location") or "").strip()
-    L.append("# User location from sheet (environment variable for downstream code)")
-    L.append(f'os.environ["USER_LOCATION"] = {json.dumps(user_location)}')
-    L.append("")
-    # -----------------------------------------------------------
+    L += ["import json, uuid", "from datetime import datetime", ""]
     L.append("# Load default DBs")
     for api in api_modules:
         if api in DEFAULT_DB_PATHS:
@@ -501,7 +493,7 @@ def build_import_and_port_cell(
             else:
                 L += [f"# {var} from {col} (JSON string)", f"{var} = json.dumps({py_literal(d)}, ensure_ascii=False)", ""]
 
-        # Paste live code with meta line
+        # Paste live code from sheet with meta note
         code_str = code_map.get(svc, "")
         if code_str:
             code_str = reescape_newlines_inside_string_literals(code_str).strip()
@@ -526,50 +518,6 @@ def build_import_and_port_cell(
 
 def build_empty_block(title: str):
     return [new_markdown_cell(f"# {title}"), new_code_cell("")]
-
-def generate_notebook_for_row(
-    row: Dict[str, str],
-    idx: int,
-    setup_cell: str,
-    pipinstall_cell: str,
-    code_map: Dict[str, str],
-    meta_map: Dict[str, Tuple[str, str]],
-) -> Tuple[nbformat.NotebookNode, Dict[str, Any]]:
-    pre = preflight_row(row)
-    services = pre["services"]
-    expanded = pre["expanded"]
-    issues = pre["issues"]
-
-    # API modules list (respect implicit deps order)
-    api_modules: List[str] = []
-    for s in services:
-        spec = SERVICE_SPECS.get(s)
-        if not spec:
-            continue
-        api = spec["api"]
-        if api not in api_modules:
-            api_modules.append(api)
-        for req in spec.get("requires", []):
-            ra = SERVICE_SPECS[req]["api"]
-            if ra not in api_modules:
-                api_modules.append(ra)
-
-    nb = new_notebook()
-    task_id = (row.get("task_id") or f"row-{idx}").strip() or f"row-{idx}"
-    nb.cells.append(build_metadata_cell(task_id, api_modules))
-    w = build_warnings_cell(issues)
-    if w:
-        nb.cells.append(w)
-    nb.cells.append(new_markdown_cell("# Set Up"))
-    nb.cells.extend(build_setup_cells(setup_cell, pipinstall_cell))
-    nb.cells.append(new_markdown_cell("## Import APIs and initiate DBs"))
-    nb.cells.append(build_import_and_port_cell(api_modules, expanded, row, code_map, meta_map))
-    nb.cells.extend(build_empty_block("Initial Assertion"))
-    nb.cells.extend(build_empty_block("Action"))
-    nb.cells.extend(build_empty_block("Final Assertion"))
-    nb.metadata["colab"] = {"provenance": []}
-    nb.metadata["language_info"] = {"name": "python"}
-    return nb, issues
 
 # ---------- Preflight & parsing
 
@@ -707,6 +655,119 @@ def build_service_code_map_with_logs(sheets) -> Tuple[Dict[str, str], Dict[str, 
 
     return code_map, meta_map
 
+# ---------- Notebook generation
+
+def build_import_and_port_cell(
+    api_modules: List[str],
+    expanded_services: List[str],
+    row: Dict[str, str],
+    code_map: Dict[str, str],
+    meta_map: Dict[str, Tuple[str, str]],
+):
+    L: List[str] = []
+    L.append("# Imports")
+    for m in api_modules:
+        L.append(f"import {m}")
+    if "notes_and_lists" in api_modules:
+        L.append("from notes_and_lists.SimulationEngine.utils import update_title_index, update_content_index")
+        L.append("from typing import Dict, Any")
+        L.append("from datetime import timezone")
+    L += ["import json, uuid", "from datetime import datetime", ""]
+    L.append("# Load default DBs")
+    for api in api_modules:
+        if api in DEFAULT_DB_PATHS:
+            L.append(f'{api}.SimulationEngine.db.load_state("{DEFAULT_DB_PATHS[api]}")')
+    L.append("")
+
+    calls: List[str] = []
+
+    for svc in expanded_services:
+        spec = PORTING_SPECS.get(svc)
+        if not spec:
+            L += [f"# (No porting spec defined for '{svc}'; skipping)", ""]
+            continue
+
+        # Inject inputs
+        for col, var, as_dict in spec.get("json_vars", []):
+            try:
+                d = parse_initial_db(row.get(col))
+            except Exception:
+                d = {}
+            if as_dict:
+                L += [f"# {var} from {col} (dict)", f"{var} = {py_literal(d)}", ""]
+            else:
+                L += [f"# {var} from {col} (JSON string)", f"{var} = json.dumps({py_literal(d)}, ensure_ascii=False)", ""]
+
+        # Paste live code with meta line
+        code_str = code_map.get(svc, "")
+        if code_str:
+            code_str = reescape_newlines_inside_string_literals(code_str).strip()
+            date_upd, resp = meta_map.get(svc, ("", ""))
+            L += [
+                f"# ==== Porting code for service: {svc} (from live sheet) ====",
+                f"# Using latest porting code for '{svc}' which was updated on {date_upd} by {resp}",
+                code_str,
+                "",
+            ]
+            for ln in spec.get("pre_call_lines", []):
+                L.append(ln)
+            if spec.get("pre_call_lines"):
+                L.append("")
+            calls.append(spec["call"])
+        else:
+            L += [f"# (No code found in code sheet for service '{svc}')", ""]
+
+    if calls:
+        L += ["# Execute porting"] + calls
+    return new_code_cell("\n".join(L) + "\n")
+
+def build_empty_block(title: str):
+    return [new_markdown_cell(f"# {title}"), new_code_cell("")]
+
+def generate_notebook_for_row(
+    row: Dict[str, str],
+    idx: int,
+    setup_cell: str,
+    pipinstall_cell: str,
+    code_map: Dict[str, str],
+    meta_map: Dict[str, Tuple[str, str]],
+) -> Tuple[nbformat.NotebookNode, Dict[str, Any]]:
+    pre = preflight_row(row)
+    services = pre["services"]
+    expanded = pre["expanded"]
+    issues = pre["issues"]
+
+    # API modules list (respect implicit deps order)
+    api_modules: List[str] = []
+    for s in services:
+        spec = SERVICE_SPECS.get(s)
+        if not spec:
+            continue
+        api = spec["api"]
+        if api not in api_modules:
+            api_modules.append(api)
+        for req in spec.get("requires", []):
+            ra = SERVICE_SPECS[req]["api"]
+            if ra not in api_modules:
+                api_modules.append(ra)
+
+    nb = new_notebook()
+    task_id = (row.get("task_id") or f"row-{idx}").strip() or f"row-{idx}"
+    nb.cells.append(build_metadata_cell(task_id, api_modules))
+    w = build_warnings_cell(issues)
+    if w:
+        nb.cells.append(w)
+    nb.cells.append(new_markdown_cell("# Set Up"))
+    nb.cells.extend(build_setup_cells(setup_cell, pipinstall_cell))
+    nb.cells.append(new_markdown_cell("## Import APIs and initiate DBs"))
+    nb.cells.append(build_import_and_port_cell(api_modules, expanded, row, code_map, meta_map))
+    nb.cells.extend(build_empty_block("Initial Assertion"))
+    nb.cells.extend(build_empty_block("Action"))
+    nb.cells.extend(build_empty_block("Final Assertion"))
+    nb.metadata["colab"] = {"provenance": []}
+    nb.metadata["language_info"] = {"name": "python"}
+    return nb, issues
+
 # ---------- Summary writer with PST timestamp
 
 def _now_pacific() -> Tuple[str, str]:
@@ -783,84 +844,6 @@ def upsert_summary_sheet_3col(sheets, spreadsheet_id: str, sheet_name: str, rows
         log.info("Adjusted row heights on summary tab to 18px for %d rows", row_count)
     else:
         log.warning("Could not find sheetId for summary tab; row height not adjusted.")
-
-# ---------- Preflight & parsing
-
-def preflight_row(row: Dict[str, str]) -> Dict[str, Any]:
-    """
-    Select services by *_initial_db presence; add dependencies; validate inputs.
-    """
-    issues = {"unknown_services": [], "missing_inputs": [], "json_errors": {}}
-
-    services = services_from_initial_db_columns(row)
-
-    expanded = list(services)
-    for s in services:
-        spec = SERVICE_SPECS.get(s)
-        if spec:
-            for req in spec["requires"]:
-                if req not in expanded:
-                    expanded.append(req)
-
-    issues["unknown_services"] = [s for s in expanded if s not in SERVICE_SPECS]
-
-    need = sorted({c for s in expanded for c in REQUIRED_INPUTS.get(s, [])})
-    for col in need:
-        v = row.get(col, "")
-        if not str(v).strip():
-            issues["missing_inputs"].append(col)
-        else:
-            try:
-                json.loads(str(v))
-            except Exception as e:
-                issues["json_errors"][col] = str(e)
-    return {"services": services, "expanded": expanded, "issues": issues}
-
-# ---------- Notebook generation
-
-def generate_notebook_for_row(
-    row: Dict[str, str],
-    idx: int,
-    setup_cell: str,
-    pipinstall_cell: str,
-    code_map: Dict[str, str],
-    meta_map: Dict[str, Tuple[str, str]],
-) -> Tuple[nbformat.NotebookNode, Dict[str, Any]]:
-    pre = preflight_row(row)
-    services = pre["services"]
-    expanded = pre["expanded"]
-    issues = pre["issues"]
-
-    # API modules list (respect implicit deps order)
-    api_modules: List[str] = []
-    for s in services:
-        spec = SERVICE_SPECS.get(s)
-        if not spec:
-            continue
-        api = spec["api"]
-        if api not in api_modules:
-            api_modules.append(api)
-        for req in spec.get("requires", []):
-            ra = SERVICE_SPECS[req]["api"]
-            if ra not in api_modules:
-                api_modules.append(ra)
-
-    nb = new_notebook()
-    task_id = (row.get("task_id") or f"row-{idx}").strip() or f"row-{idx}"
-    nb.cells.append(build_metadata_cell(task_id, api_modules))
-    w = build_warnings_cell(issues)
-    if w:
-        nb.cells.append(w)
-    nb.cells.append(new_markdown_cell("# Set Up"))
-    nb.cells.extend(build_setup_cells(setup_cell, pipinstall_cell))
-    nb.cells.append(new_markdown_cell("## Import APIs and initiate DBs"))
-    nb.cells.append(build_import_and_port_cell(api_modules, expanded, row, code_map, meta_map))
-    nb.cells.extend(build_empty_block("Initial Assertion"))
-    nb.cells.extend(build_empty_block("Action"))
-    nb.cells.extend(build_empty_block("Final Assertion"))
-    nb.metadata["colab"] = {"provenance": []}
-    nb.metadata["language_info"] = {"name": "python"}
-    return nb, issues
 
 # ---------- Main flow
 

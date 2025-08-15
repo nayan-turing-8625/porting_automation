@@ -34,7 +34,7 @@ SOURCE_SHEET_NAME    = os.environ.get("SOURCE_WORKING_SHEET_NAME", "Working Shee
 SUMMARY_SHEET_NAME   = os.environ.get("SUMMARY_SHEET_NAME_WORKING_AUTOMATION", "Generated_Colabs_Working_Automation").strip()
 
 # OUT_FOLDER_NAME may be a Drive FOLDER ID (preferred) or a subfolder NAME under MyDrive/port_automation
-OUT_FOLDER_NAME      = os.environ.get("OUT_FOLDER_NAME", "generated_colabs").strip()
+OUT_FOLDER_NAME      = os.environ.get("WS_OUT_FOLDER_NAME", "generated_colabs").strip()
 
 # Optional: if the code lives in a separate spreadsheet
 CODE_SPREADSHEET_ID  = os.environ.get("CODE_SPREADSHEET_ID", "").strip()

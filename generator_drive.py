@@ -421,7 +421,6 @@ def services_from_initial_db_columns(row: Dict[str, str]) -> List[str]:
 
 def build_metadata_cell(task_id: str, api_modules: List[str]):
     md = [
-        "# Sample ID\n\n",
         f"**Sample ID**: {task_id}\n\n",
         "**Query**:\n\n",
         "**DB Type**: Base Case\n\n",

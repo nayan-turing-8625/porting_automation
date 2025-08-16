@@ -38,10 +38,10 @@ CODE_SPREADSHEET_ID  = os.environ.get("CODE_SPREADSHEET_ID", "").strip()
 CODE_SHEET_NAME      = os.environ.get("CODE_SHEET_NAME", "Translate_JSONs").strip()
 
 SUMMARY_SHEET_NAME_WORKING_AUTOMATION = os.environ.get(
-    "SUMMARY_SHEET_NAME_WORKING_AUTOMATION", "Working_Sheet_Generated_Colabs"
+    "SUMMARY_SHEET_NAME_WORKING_AUTOMATION_FA_VAL", "Working_Sheet_Generated_Colabs"
 ).strip()
 
-WS_OUT_FOLDER_NAME   = os.environ.get("WS_OUT_FOLDER_NAME", "generated_colabs_ws").strip()
+WS_OUT_FOLDER_NAME   = os.environ.get("WS_OUT_FOLDER_NAME_FA_VAL", "generated_colabs_ws").strip()
 
 # Drive paths
 MYDRIVE_ROOT         = "/content/drive/MyDrive"

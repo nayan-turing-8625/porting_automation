@@ -1,21 +1,11 @@
 # generator_working_sample.py
 # Working Sheet → Colab notebooks in Drive + summary tab (code read from sheet cells)
-# - Keeps existing behavior:
-#   * Reads initial DB inputs from "Template Colab" (by task_id)
-#   * Reads live porting code from "Translate_JSONs" (function_to_translate_json)
-#   * Builds notebooks with Setup cells, Import DB cell, Initial/Action empty, Final Assertion code from Working Sheet
-#   * Injects USER_LOCATION env var from Working Sheet into Import DB cell
-#   * Saves notebooks to WS_OUT_FOLDER_NAME (Drive folder ID or subfolder name)
-#   * Writes 5-col summary (task_id, services_required, colab_url, refresh_date, refresh_time) with Pacific time
-#
-# - >>> FINAL-DB ADDITIONS (only for working sheet):
-#   * New Markdown "## Initiate Final DBs" and one code cell inserted just BEFORE "Final Assertion"
-#   * Uses Working Sheet column: final_state_changes_needed (services list)
-#   * For each listed service, pulls code from Translate_JSONs column: function_to_translate_json_finalDB
-#   * Injects JSON from Working Sheet columns: ported_<service>_final_db (if present/non-empty)
-#   * Attempts to call a function named port_<service>_final_db(<jsonvar>) if it exists; otherwise prints a helpful message
-#
-# Everything else remains unchanged.
+# Keeps all existing behavior and adds a robust "Initiate Final DBs" section:
+# - Section sits AFTER "Action" and BEFORE "Final Assertion"
+# - Injects JSON from Working Sheet columns: ported_<service>_final_db
+# - Uses SAME pre_call_lines and SAME call as the initial stage (e.g., port_db_whatsapp_and_contacts)
+# - Pulls final-DB code from Translate_JSONs:function_to_translate_json_finalDB (latest per service)
+# - USER_LOCATION env var still injected from Working Sheet
 
 from __future__ import annotations
 
@@ -23,6 +13,7 @@ import os
 import sys
 import re
 import json
+import ast
 import pprint
 import logging
 from typing import Dict, Any, List, Optional, Tuple
@@ -39,57 +30,48 @@ from googleapiclient.http import MediaInMemoryUpload  # type: ignore
 # =========================
 # Config via environment
 # =========================
-SPREADSHEET_ID       = os.environ.get("SPREADSHEET_ID", "").strip()               # REQUIRED (shared)
-SOURCE_SHEET_NAME    = os.environ.get("SOURCE_SHEET_NAME", "Template Colab").strip()  # Template rows (initial DBs live here)
+SPREADSHEET_ID       = os.environ.get("SPREADSHEET_ID", "").strip()
+SOURCE_SHEET_NAME    = os.environ.get("SOURCE_SHEET_NAME", "Template Colab").strip()
 SOURCE_WORKING_SHEET_NAME = os.environ.get("SOURCE_WORKING_SHEET_NAME", "Working_Sheet").strip()
 
-# Code sheet (for live porting code)
-CODE_SPREADSHEET_ID  = os.environ.get("CODE_SPREADSHEET_ID", "").strip()          # optional (defaults to SPREADSHEET_ID)
+CODE_SPREADSHEET_ID  = os.environ.get("CODE_SPREADSHEET_ID", "").strip()
 CODE_SHEET_NAME      = os.environ.get("CODE_SHEET_NAME", "Translate_JSONs").strip()
 
-# Summary tab (for working sample)
 SUMMARY_SHEET_NAME_WORKING_AUTOMATION = os.environ.get(
     "SUMMARY_SHEET_NAME_WORKING_AUTOMATION", "Working_Sheet_Generated_Colabs"
 ).strip()
 
-# OUT folder: Drive FOLDER ID (preferred) or subfolder NAME under MyDrive/port_automation
 WS_OUT_FOLDER_NAME   = os.environ.get("WS_OUT_FOLDER_NAME", "generated_colabs_ws").strip()
 
 # Drive paths
 MYDRIVE_ROOT         = "/content/drive/MyDrive"
-CODEBASE_FOLDER_NAME = "port_automation"               # codebase folder in Drive
+CODEBASE_FOLDER_NAME = "porting_automation"
 CODEBASE_ROOT        = os.path.join(MYDRIVE_ROOT, CODEBASE_FOLDER_NAME)
 
 # =========================
-# Logging (stream live in Colab)
+# Logging (live in Colab)
 # =========================
 os.environ["PYTHONUNBUFFERED"] = "1"
 try:
-    sys.stdout.reconfigure(line_buffering=True)  # py3.7+
+    sys.stdout.reconfigure(line_buffering=True)
 except Exception:
     pass
 
 def init_logging(level: str = "INFO") -> logging.Logger:
     lvl = getattr(logging, level.upper(), logging.INFO)
-
-    # Remove handlers
     root = logging.getLogger()
     for h in root.handlers[:]:
         root.removeHandler(h)
-    gen = logging.getLogger("generator_ws")
-    for h in gen.handlers[:]:
-        gen.removeHandler(h)
+    lg = logging.getLogger("generator_ws")
+    for h in lg.handlers[:]:
+        lg.removeHandler(h)
 
-    # stdout handler
     h = logging.StreamHandler(sys.stdout)
     h.setLevel(lvl)
     h.setFormatter(logging.Formatter("%(asctime)s | %(levelname)-8s | %(message)s", "%Y-%m-%d %H:%M:%S"))
-    root.setLevel(lvl)
-    root.addHandler(h)
-
-    gen.setLevel(lvl)
-    gen.propagate = True
-    return gen
+    root.setLevel(lvl); root.addHandler(h)
+    lg.setLevel(lvl); lg.propagate = True
+    return lg
 
 log = init_logging("INFO")
 
@@ -101,7 +83,7 @@ DEFAULT_DB_PATHS: Dict[str, str] = {
     "whatsapp":           "/content/DBs/WhatsAppDefaultDB.json",
     "google_calendar":    "/content/DBs/CalendarDefaultDB.json",
     "gmail":              "/content/DBs/GmailDefaultDB.json",
-    "device_setting":     "/content/DBs/DeviceSettingDefaultDB.json",   # singular package
+    "device_setting":     "/content/DBs/DeviceSettingDefaultDB.json",
     "media_control":      "/content/DBs/MediaControlDefaultDB.json",
     "clock":              "/content/DBs/ClockDefaultDB.json",
     "generic_reminders":  "/content/DBs/GenericRemindersDefaultDB.json",
@@ -116,7 +98,7 @@ SERVICE_SPECS: Dict[str, Dict[str, Any]] = {
     "contacts":         {"api": "contacts",           "requires": []},
     "calendar":         {"api": "google_calendar",    "requires": []},
     "gmail":            {"api": "gmail",              "requires": []},
-    "device_settings":  {"api": "device_setting",     "requires": []},   # singular package
+    "device_settings":  {"api": "device_setting",     "requires": []},
     "media_control":    {"api": "media_control",      "requires": []},
     "clock":            {"api": "clock",              "requires": []},
     "reminders":        {"api": "generic_reminders",  "requires": []},
@@ -124,8 +106,7 @@ SERVICE_SPECS: Dict[str, Dict[str, Any]] = {
 }
 
 # =========================
-# Porting specs (initial stage) — inject vars + call
-# json_vars: (sheet_column, notebook_var_name, inject_as_dict)
+# Porting specs (initial stage)
 # =========================
 PORTING_SPECS: Dict[str, Dict[str, Any]] = {
     "whatsapp": {
@@ -161,7 +142,6 @@ PORTING_SPECS: Dict[str, Dict[str, Any]] = {
         "call":        "port_media_control_db(media_control_src_json)",
     },
     "clock": {
-        # Keep as JSON string (porter uses json.loads internally)
         "json_vars":   [("clock_initial_db", "clock_src_json", False)],
         "call":        "port_clock_db(clock_src_json)",
     },
@@ -175,19 +155,20 @@ PORTING_SPECS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# =========================
-# FINAL-DB specs — only variable injection & a "best-effort" call
-# We avoid hardcoding function names; we try: port_<service>_final_db(<jsonvar>)
-# =========================
-def final_db_col_for_service(svc: str) -> str:
-    """Column name in Working Sheet for a service's final DB JSON."""
-    return f"ported_{svc}_final_db"
+# Map service → (its "self" variable name used in initial json_vars, and whether that var is dict)
+SELF_VAR_BY_SERVICE: Dict[str, Tuple[str, bool]] = {
+    "whatsapp":        ("whatsapp_src_json", False),
+    "contacts":        ("contacts_src_json", False),
+    "calendar":        ("port_calender_db",  True),
+    "gmail":           ("gmail_src_json",    False),
+    "device_settings": ("device_settings_src_json", False),
+    "media_control":   ("media_control_src_json",   False),
+    "clock":           ("clock_src_json",    False),
+    "reminders":       ("reminders_src_json",False),
+    "notes":           ("notes_src_json",    False),
+}
 
-def final_json_var_for_service(svc: str) -> str:
-    """Variable name inside the generated notebook for a service's final DB JSON string."""
-    return f"{svc}_final_src_json"
-
-# First entry in REQUIRED_INPUTS is the *primary* column to decide selection for initial stage
+# First entry is the primary column to decide initial selection (from Template Colab)
 REQUIRED_INPUTS: Dict[str, List[str]] = {
     "whatsapp":        ["whatsapp_initial_db", "contacts_initial_db"],
     "contacts":        ["contacts_initial_db"],
@@ -212,8 +193,6 @@ def mount_and_import_codebase():
         )
     if CODEBASE_ROOT not in sys.path:
         sys.path.append(CODEBASE_ROOT)
-
-    # Import static cells from your codebase (used in the generated notebooks)
     from static_code.setup_code_cell import setup_cell
     from static_code.pipinstall_cell import pipinstall_cell
     return setup_cell, pipinstall_cell
@@ -225,119 +204,91 @@ def auth_services():
     return drive, sheets
 
 def normalize_service_token(tok: str) -> str:
-    t = re.sub(r"[/&]", " ", str(tok).strip().lower())
-    t = re.sub(r"\s+", " ", t)
+    t = re.sub(r"[/&]", " ", str(tok).strip().lower()); t = re.sub(r"\s+", " ", t)
     synonyms = {
-        "google calendar": "calendar",
-        "calender": "calendar",
-        "google mail": "gmail",
-        "email": "gmail",
-        "e-mail": "gmail",
+        "google calendar": "calendar", "calender": "calendar",
+        "google mail": "gmail", "email": "gmail", "e-mail": "gmail",
         "media control": "media_control",
         "device settings": "device_settings",
-        "whatsapp message": "whatsapp",
-        "whatsapp messages": "whatsapp",
-        "message": "whatsapp",
-        "messages": "whatsapp",
-        "reminder": "reminders",
-        "generic reminders": "reminders",
-        "notes and lists": "notes",
-        "notes_and_lists": "notes",
+        "whatsapp message": "whatsapp", "whatsapp messages": "whatsapp",
+        "message": "whatsapp", "messages": "whatsapp",
+        "reminder": "reminders", "generic reminders": "reminders",
+        "notes and lists": "notes", "notes_and_lists": "notes",
     }
     return synonyms.get(t, t)
 
 def split_services(cell: Optional[str]) -> List[str]:
-    if not cell:
-        return []
+    if not cell: return []
     tokens = re.split(r"[|,]", cell)
     out, seen = [], set()
     for tok in tokens:
         name = normalize_service_token(tok)
         if name and name not in seen:
-            out.append(name)
-            seen.add(name)
+            out.append(name); seen.add(name)
     return out
 
 def parse_initial_db(cell_value: Optional[str]) -> Dict[str, Any]:
-    """Parse strict JSON from sheet cell (so true/false/null are valid)."""
-    if cell_value is None:
-        return {}
+    if cell_value is None: return {}
     s = str(cell_value).strip()
-    if not s or s.lower() in {"nan", "none", "null"}:
-        return {}
+    if not s or s.lower() in {"nan","none","null"}: return {}
     return json.loads(s)
+
+def parse_json_best_effort(cell_value: Optional[str]) -> Dict[str, Any]:
+    """Accept strict JSON or Python-literal dict/list; fallback to {}."""
+    if cell_value is None: return {}
+    s = str(cell_value).strip()
+    if not s or s.lower() in {"nan","none","null"}: return {}
+    # Try JSON
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    # Try Python literal (e.g., dict with single quotes)
+    try:
+        val = ast.literal_eval(s)
+        # Ensure it's JSON-serializable (obj or list)
+        if isinstance(val, (dict, list)):
+            return val
+    except Exception:
+        pass
+    return {}
 
 def py_literal(obj: Any) -> str:
     return pprint.pformat(obj, width=100, sort_dicts=False)
 
 def reescape_newlines_inside_string_literals(src: str) -> str:
-    """Re-escape real newlines in quoted strings → '\\n' (keeps print('...') intact)."""
-    if not src:
-        return ""
-    s = src.replace("\r\n", "\n").replace("\r", "\n")
-    out = []
-    i, n = 0, len(s)
-    in_str = False
-    triple = False
-    quote = ""
-    escape = False
-    in_comment = False
-    while i < n:
-        ch = s[i]
+    if not src: return ""
+    s = src.replace("\r\n","\n").replace("\r","\n")
+    out=[]; i=0; n=len(s); in_str=False; triple=False; quote=''; escape=False; in_comment=False
+    while i<n:
+        ch=s[i]
         if in_comment:
             out.append(ch)
-            if ch == "\n":
-                in_comment = False
-            i += 1
-            continue
+            if ch=="\n": in_comment=False
+            i+=1; continue
         if in_str:
-            if escape:
-                out.append(ch)
-                escape = False
-            elif ch == "\\":
-                out.append(ch)
-                escape = True
+            if escape: out.append(ch); escape=False
+            elif ch=="\\": out.append(ch); escape=True
             elif triple:
-                if ch == quote and i + 2 < n and s[i + 1] == quote and s[i + 2] == quote:
-                    out += [ch, quote, quote]
-                    i += 3
-                    in_str = False
-                    triple = False
+                if ch==quote and i+2<n and s[i+1]==quote and s[i+2]==quote:
+                    out+=[ch,quote,quote]; i+=3; in_str=False; triple=False
                 else:
-                    out.append("\\n" if ch == "\n" else ch)
-                    i += 1
+                    out.append("\\n" if ch=="\n" else ch); i+=1
                 continue
             else:
-                if ch == "\n":
-                    out.append("\\n")
-                elif ch == quote:
-                    out.append(ch)
-                    in_str = False
-                else:
-                    out.append(ch)
-            i += 1
-            continue
-        if ch == "#":
-            in_comment = True
-            out.append(ch)
-            i += 1
-            continue
-        if ch in ("'", '"'):
-            if i + 2 < n and s[i + 1] == ch and s[i + 2] == ch:
-                out += [ch, ch, ch]
-                i += 3
-                in_str = True
-                triple = True
-                quote = ch
+                if ch=="\n": out.append("\\n")
+                elif ch==quote: out.append(ch); in_str=False
+                else: out.append(ch)
+            i+=1; continue
+        if ch=="#":
+            in_comment=True; out.append(ch); i+=1; continue
+        if ch in ("'",'"'):
+            if i+2<n and s[i+1]==ch and s[i+2]==ch:
+                out+=[ch,ch,ch]; i+=3; in_str=True; triple=True; quote=ch
             else:
-                out.append(ch)
-                i += 1
-                in_str = True
-                triple = False
-                quote = ch
+                out.append(ch); i+=1; in_str=True; triple=False; quote=ch
             continue
-        out.append(ch)
-        i += 1
+        out.append(ch); i+=1
     return "".join(out)
 
 # ---------- Google Drive helpers
@@ -345,46 +296,37 @@ def reescape_newlines_inside_string_literals(src: str) -> str:
 def find_root_folder_id(drive, name: str) -> str:
     q = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false"
     res = drive.files().list(q=q, fields="files(id,name)").execute().get("files", [])
-    if not res:
-        raise RuntimeError(f"Folder '{name}' not found in My Drive root.")
+    if not res: raise RuntimeError(f"Folder '{name}' not found in My Drive root.")
     return res[0]["id"]
 
 def ensure_subfolder(drive, parent_id: str, name: str) -> str:
-    q = (
-        f"'{parent_id}' in parents and name='{name}' and "
-        f"mimeType='application/vnd.google-apps.folder' and trashed=false"
-    )
+    q = (f"'{parent_id}' in parents and name='{name}' and "
+         f"mimeType='application/vnd.google-apps.folder' and trashed=false")
     res = drive.files().list(q=q, fields="files(id,name)").execute().get("files", [])
-    if res:
-        return res[0]["id"]
+    if res: return res[0]["id"]
     meta = {"name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]}
     folder = drive.files().create(body=meta, fields="id").execute()
     return folder["id"]
 
 def resolve_output_folder_id(drive, out_hint: str, codebase_folder_name: str) -> str:
-    """Accept OUT folder as a Drive folder ID or a name under MyDrive/<codebase_folder_name>."""
     if out_hint:
-        # Try as ID
         try:
             meta = drive.files().get(fileId=out_hint, fields="id,name,mimeType,trashed").execute()
             if meta and meta.get("mimeType") == "application/vnd.google-apps.folder" and not meta.get("trashed", False):
                 log.info("Using provided Drive folder ID: %s (%s)", meta["id"], meta["name"])
                 return meta["id"]
         except Exception:
-            pass  # not an ID → treat as a name
+            pass
         base_id = find_root_folder_id(drive, codebase_folder_name)
         sub_id = ensure_subfolder(drive, base_id, out_hint)
         log.info("Using/created subfolder '%s' under MyDrive/%s", out_hint, codebase_folder_name)
         return sub_id
-    # Default
     base_id = find_root_folder_id(drive, codebase_folder_name)
     return ensure_subfolder(drive, base_id, "generated_colabs_ws")
 
 def empty_drive_folder(drive, folder_id: str) -> int:
-    """Remove all items in the given Drive folder."""
     log.info("Emptying output folder (id=%s) before generation …", folder_id)
-    removed = 0
-    page_token = None
+    removed=0; page_token=None
     while True:
         resp = drive.files().list(
             q=f"'{folder_id}' in parents and trashed=false",
@@ -392,19 +334,16 @@ def empty_drive_folder(drive, folder_id: str) -> int:
             pageToken=page_token
         ).execute()
         files = resp.get("files", [])
-        if not files:
-            break
+        if not files: break
         for f in files:
-            fid = f["id"]; fname = f.get("name",""); mt = f.get("mimeType","")
+            fid=f["id"]; fname=f.get("name",""); mt=f.get("mimeType","")
             try:
                 drive.files().delete(fileId=fid).execute()
-                removed += 1
-                log.info("  - removed: %s (%s)", fname, mt)
+                removed+=1; log.info("  - removed: %s (%s)", fname, mt)
             except Exception as e:
                 log.warning("  - could not remove %s (%s): %s", fname, fid, e)
-        page_token = resp.get("nextPageToken", None)
-        if not page_token:
-            break
+        page_token = resp.get("nextPageToken")
+        if not page_token: break
     log.info("Output folder emptied: %d item(s) removed.", removed)
     return removed
 
@@ -424,32 +363,23 @@ def get_first_sheet_title(sheets, spreadsheet_id: str) -> str:
     return meta["sheets"][0]["properties"]["title"]
 
 def read_sheet_as_dicts(sheets, spreadsheet_id: str, sheet_name: str) -> Tuple[List[str], List[Dict[str, str]]]:
-    """Robustly read a sheet; handles ragged rows without IndexError."""
     rng = f"'{sheet_name}'"
     resp = sheets.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=rng).execute()
     values = resp.get("values", [])
-    if not values:
-        return [], []
+    if not values: return [], []
     headers = [h.strip() for h in values[0]]
     rows: List[Dict[str, str]] = []
     for r in values[1:]:
-        row_dict: Dict[str, str] = {}
-        for i in range(len(headers)):
-            row_dict[headers[i]] = r[i] if i < len(r) else ""
+        row_dict = {headers[i]: (r[i] if i < len(r) else "") for i in range(len(headers))}
         rows.append(row_dict)
     return headers, rows
 
-# ---------- Service selection by *_initial_db columns (from Template Colab)
+# ---------- Initial-selection from Template Colab
 
 def services_from_initial_db_columns(row: Dict[str, str]) -> List[str]:
-    """
-    For each service, check its PRIMARY initial-db column (first entry of REQUIRED_INPUTS[service]).
-    If the cell is non-empty, select the service.
-    """
     selected: List[str] = []
     for svc, cols in REQUIRED_INPUTS.items():
-        if not cols:
-            continue
+        if not cols: continue
         primary = cols[0]
         if str(row.get(primary, "")).strip():
             selected.append(svc)
@@ -458,15 +388,12 @@ def services_from_initial_db_columns(row: Dict[str, str]) -> List[str]:
 # ---------- Code sheet readers (initial and final)
 
 def _find_header(headers: List[str], candidates: List[str]) -> Optional[str]:
-    """Find a header by exact (case-insensitive) or contains matching."""
     hnorm = [h.strip().lower() for h in headers]
-    # exact first
     for cand in candidates:
         cand_l = cand.strip().lower()
         for i, h in enumerate(hnorm):
             if h == cand_l:
                 return headers[i]
-    # contains fallback
     for cand in candidates:
         cand_l = cand.strip().lower()
         for i, h in enumerate(hnorm):
@@ -475,23 +402,18 @@ def _find_header(headers: List[str], candidates: List[str]) -> Optional[str]:
     return None
 
 def _parse_any_date(s: str) -> Optional[datetime]:
-    if not s:
-        return None
+    if not s: return None
     s = s.strip()
     fmts = [
-        "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%m/%d/%Y", "%d/%m/%Y",
-        "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%m/%d/%Y %H:%M:%S", "%d/%m/%Y %H:%M:%S",
-        "%b %d, %Y", "%d %b %Y", "%b %d %Y", "%Y.%m.%d",
+        "%Y-%m-%d","%Y/%m/%d","%d-%m-%Y","%m/%d/%Y","%d/%m/%Y",
+        "%Y-%m-%d %H:%M:%S","%Y/%m/%d %H:%M:%S","%m/%d/%Y %H:%M:%S","%d/%m/%Y %H:%M:%S",
+        "%b %d, %Y","%d %b %Y","%b %d %Y","%Y.%m.%d",
     ]
     for fmt in fmts:
-        try:
-            return datetime.strptime(s, fmt)
-        except Exception:
-            pass
-    try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except Exception:
-        return None
+        try: return datetime.strptime(s, fmt)
+        except Exception: pass
+    try: return datetime.fromisoformat(s.replace("Z","+00:00"))
+    except Exception: return None
 
 def build_service_code_map_with_logs(
     sheets,
@@ -501,79 +423,52 @@ def build_service_code_map_with_logs(
     date_col_candidates: List[str] = None,
     resp_col_candidates: List[str] = None,
 ) -> Tuple[Dict[str, str], Dict[str, Tuple[str, str]]]:
-    """
-    Returns:
-      code_map: service -> code string (from specified code column)
-      meta_map: service -> (date_updated_display, responsible_person_display)
-    Logs the chosen latest entry per service (by the selected date column if provided).
-    """
-    sheet_id_for_code = spreadsheet_id
-    headers, rows = read_sheet_as_dicts(sheets, sheet_id_for_code, code_sheet_name)
+    headers, rows = read_sheet_as_dicts(sheets, spreadsheet_id, code_sheet_name)
     if not rows:
         raise RuntimeError(f"No rows found in code sheet '{code_sheet_name}'.")
 
-    svc_col  = _find_header(headers, ["service_name", "service", "api", "services"])
+    svc_col  = _find_header(headers, ["service_name","service","api","services"])
     code_col = _find_header(headers, code_col_candidates or ["function_to_translate_json"])
     if not svc_col or not code_col:
-        raise RuntimeError(
-            f"Could not find required columns 'service_name' and one of {code_col_candidates} in code sheet."
-        )
+        raise RuntimeError(f"Missing service/code columns in code sheet '{code_sheet_name}'.")
 
     date_col = _find_header(headers, (date_col_candidates or
-                                      ["translate_jsons(date_updated)", "date_updated", "last_updated", "updated_at", "modified_at", "date"]))
+                                      ["translate_jsons(date_updated)","date_updated","last_updated","updated_at","modified_at","date"]))
     resp_col = _find_header(headers, (resp_col_candidates or
-                                      ["responsible person", "responsible", "owner", "author", "updated_by"]))
+                                      ["responsible person","responsible","owner","author","updated_by"]))
 
     grouped: Dict[str, List[Dict[str, str]]] = {}
     for r in rows:
         raw_svc = (r.get(svc_col) or "").strip()
-        if not raw_svc:
-            continue
+        if not raw_svc: continue
         svc_norm = normalize_service_token(raw_svc)
         grouped.setdefault(svc_norm, []).append(r)
 
     code_map: Dict[str, str] = {}
     meta_map: Dict[str, Tuple[str, str]] = {}
-
     for svc, items in grouped.items():
-        best_idx = -1
-        best_dt: Optional[datetime] = None
+        best_idx = -1; best_dt: Optional[datetime] = None
         for i, it in enumerate(items):
             dt_str = (it.get(date_col) if date_col else "") or ""
             dt = _parse_any_date(dt_str) if dt_str else None
             if best_dt is None or (dt and dt > best_dt):
-                best_dt = dt
-                best_idx = i
-
+                best_dt = dt; best_idx = i
         chosen = items[best_idx] if best_idx >= 0 else items[0]
         code_str = chosen.get(code_col, "") or ""
-        if not code_str:
-            continue
-
+        if not code_str: continue
         code_map[svc] = code_str
         chosen_date = (chosen.get(date_col) or "N/A") if date_col else "N/A"
         chosen_resp = (chosen.get(resp_col) or "N/A") if resp_col else "N/A"
         meta_map[svc] = (chosen_date, chosen_resp)
-
-        # Log the selection
-        log.info(
-            "Using latest porting code for '%s' (%s) which was updated on %s by %s",
-            svc,
-            code_col,
-            chosen_date,
-            chosen_resp,
-        )
-
+        log.info("Using latest porting code for '%s' (%s) updated on %s by %s",
+                 svc, code_col, chosen_date, chosen_resp)
     return code_map, meta_map
 
-# ---------- Summary writer with PST timestamp
+# ---------- Summary writer (PST)
 
 def _now_pacific() -> Tuple[str, str]:
-    """
-    Return (date_str, time_str) in America/Los_Angeles.
-    """
     try:
-        from zoneinfo import ZoneInfo  # py>=3.9
+        from zoneinfo import ZoneInfo
         tz = ZoneInfo("America/Los_Angeles")
         dt = datetime.now(timezone.utc).astimezone(tz)
     except Exception:
@@ -581,12 +476,6 @@ def _now_pacific() -> Tuple[str, str]:
     return dt.strftime("%Y-%m-%d"), dt.strftime("%H:%M:%S")
 
 def upsert_summary_sheet_3col_ws(sheets, spreadsheet_id: str, sheet_name: str, rows_3col: List[List[str]]):
-    """
-    Writes FIVE columns:
-      task_id, services_required, colab_url, refresh_date, refresh_time
-    where refresh_* are the same for all rows and computed in Pacific Time.
-    """
-    # ensure sheet exists (or clear)
     meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
     existing = {sh["properties"]["title"] for sh in meta.get("sheets", [])}
     if sheet_name not in existing:
@@ -602,8 +491,6 @@ def upsert_summary_sheet_3col_ws(sheets, spreadsheet_id: str, sheet_name: str, r
         log.info("Cleared existing rows in summary sheet tab: %s", sheet_name)
 
     refresh_date, refresh_time = _now_pacific()
-    log.info("Summary refresh timestamp (Pacific): %s %s", refresh_date, refresh_time)
-
     rows_5col = [r + [refresh_date, refresh_time] for r in rows_3col]
 
     headers = ["task_id", "services_required", "colab_url", "refresh_date", "refresh_time"]
@@ -615,35 +502,28 @@ def upsert_summary_sheet_3col_ws(sheets, spreadsheet_id: str, sheet_name: str, r
         body=body,
     ).execute()
 
-    # Set row height to ~18px
     meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
     sheet_id = None
     for sh in meta["sheets"]:
         if sh["properties"]["title"] == sheet_name:
-            sheet_id = sh["properties"]["sheetId"]
-            break
+            sheet_id = sh["properties"]["sheetId"]; break
     if sheet_id is not None:
         row_count = len(rows_5col) + 1
-        requests = [
-            {
-                "updateDimensionProperties": {
-                    "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": 0, "endIndex": row_count},
-                    "properties": {"pixelSize": 18},
-                    "fields": "pixelSize",
-                }
+        req = [{
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": 0, "endIndex": row_count},
+                "properties": {"pixelSize": 18},
+                "fields": "pixelSize",
             }
-        ]
-        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
-        log.info("Adjusted row heights on summary tab to 18px for %d rows", row_count)
-    else:
-        log.warning("Could not find sheetId for summary tab; row height not adjusted.")
+        }]
+        sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": req}).execute()
 
 # ---------- Notebook builders
 
 def build_metadata_cell(task_id: str, query_text: str, api_modules: List[str]):
     md = [
         f"**Sample ID**: {task_id}\n\n",
-        f"**Query**: {query_text or ''}\n\n",  # same line as requested
+        f"**Query**: {query_text or ''}\n\n",           # same line
         "**DB Type**: Base Case\n\n",
         "**Case Description**:\n\n",
         "**Global/Context Variables:**\n\n",
@@ -654,18 +534,15 @@ def build_metadata_cell(task_id: str, query_text: str, api_modules: List[str]):
     return new_markdown_cell("".join(md))
 
 def build_warnings_cell(issues: Dict[str, Any]):
-    msgs = []
-    if issues["unknown_services"]:
-        msgs.append(f"- Unknown/unsupported services: `{', '.join(issues['unknown_services'])}`")
-    if issues["missing_inputs"]:
-        msgs.append(f"- Missing required inputs: `{', '.join(issues['missing_inputs'])}`")
-    if issues["json_errors"]:
-        msgs.append("- JSON parse errors:\n  - " + "\n  - ".join(f"`{k}` → {v}" for k, v in issues["json_errors"].items()))
+    msgs=[]
+    if issues["unknown_services"]: msgs.append(f"- Unknown/unsupported services: `{', '.join(issues['unknown_services'])}`")
+    if issues["missing_inputs"]:   msgs.append(f"- Missing required inputs: `{', '.join(issues['missing_inputs'])}`")
+    if issues["json_errors"]:      msgs.append("- JSON parse errors:\n  - " + "\n  - ".join(f"`{k}` → {v}" for k,v in issues["json_errors"].items()))
     return new_markdown_cell("### Warnings detected for this row\n\n" + "\n".join(msgs)) if msgs else None
 
 def build_setup_cells(setup_cell: str, pipinstall_cell: str):
     setup_src = reescape_newlines_inside_string_literals(setup_cell).strip() + "\n"
-    pip_src = reescape_newlines_inside_string_literals(pipinstall_cell).strip() + "\n"
+    pip_src   = reescape_newlines_inside_string_literals(pipinstall_cell).strip() + "\n"
     return [
         new_markdown_cell("## Download relevant files"),
         new_code_cell(setup_src),
@@ -681,16 +558,9 @@ def build_import_and_port_cell_ws(
     code_map_initial: Dict[str, str],
     meta_map_initial: Dict[str, Tuple[str, str]],
 ):
-    """
-    Import + initial DB porting (same as generator_drive), but:
-      - USER_LOCATION env var from Working Sheet
-      - initial DB JSONs come from Template Colab row (template_row)
-      - porting code from function_to_translate_json (code_map_initial)
-    """
     L: List[str] = []
     L.append("# Imports")
-    for m in api_modules:
-        L.append(f"import {m}")
+    for m in api_modules: L.append(f"import {m}")
     if "notes_and_lists" in api_modules:
         L.append("from notes_and_lists.SimulationEngine.utils import update_title_index, update_content_index")
         L.append("from typing import Dict, Any")
@@ -716,7 +586,7 @@ def build_import_and_port_cell_ws(
             L += [f"# (No porting spec defined for '{svc}'; skipping)", ""]
             continue
 
-        # Inject inputs — from TEMPLATE row (not working row)
+        # Inject inputs — from TEMPLATE row
         for col, var, as_dict in spec.get("json_vars", []):
             try:
                 d = parse_initial_db(template_row.get(col))
@@ -738,10 +608,8 @@ def build_import_and_port_cell_ws(
                 code_str,
                 "",
             ]
-            for ln in spec.get("pre_call_lines", []):
-                L.append(ln)
-            if spec.get("pre_call_lines"):
-                L.append("")
+            for ln in spec.get("pre_call_lines", []): L.append(ln)
+            if spec.get("pre_call_lines"): L.append("")
             calls.append(spec["call"])
         else:
             L += [f"# (No initial code found in code sheet for service '{svc}')", ""]
@@ -750,46 +618,50 @@ def build_import_and_port_cell_ws(
         L += ["# Execute initial porting"] + calls
     return new_code_cell("\n".join(L) + "\n")
 
-# >>> FINAL-DB ADDITIONS -------------------------------------------------------
+# --------- FINAL-DB SECTION (AFTER Action, BEFORE Final Assertion)
+
+def final_db_col_for_service(svc: str) -> str:
+    return f"ported_{svc}_final_db"
 
 def build_initiate_final_dbs_cell_ws(
     final_services: List[str],
     working_row: Dict[str, str],
     code_map_final: Dict[str, str],
     meta_map_final: Dict[str, Tuple[str, str]],
-) -> nbformat.NotebookNode:
-    """
-    Builds the single code cell for "Initiate Final DBs".
-    For each service in final_services:
-      - Insert code from function_to_translate_json_finalDB (if present)
-      - Inject JSON var from Working Sheet column: ported_<service>_final_db
-      - Try to call: port_<service>_final_db(<jsonvar>) if defined, else print a gentle hint
-    """
+):
     L: List[str] = []
     L.append("# Initiate Final DBs")
     if not final_services:
         L += ["# (No final state changes required for this task)", ""]
         return new_code_cell("\n".join(L) + "\n")
 
+    calls: List[str] = []
+
     for svc in final_services:
-        code_str = code_map_final.get(svc, "")
-        json_col = final_db_col_for_service(svc)
-        var_name = final_json_var_for_service(svc)
+        svc = normalize_service_token(svc)
+        spec = PORTING_SPECS.get(svc)
+        if not spec:
+            L += [f"# (No porting spec defined for '{svc}'; skipping)", ""]
+            continue
 
-        # Inject final-db JSON var (if provided)
-        try:
-            d = parse_initial_db(working_row.get(json_col))
-        except Exception:
-            d = {}
+        var_name, is_dict = SELF_VAR_BY_SERVICE.get(svc, (None, False))
+        if not var_name:
+            L += [f"# (Could not determine primary variable for service '{svc}'; skipping)", ""]
+            continue
 
-        if d:
-            L += [f"# {var_name} from Working Sheet → {json_col} (JSON string)",
-                  f"{var_name} = json.dumps({py_literal(d)}, ensure_ascii=False)", ""]
+        col = final_db_col_for_service(svc)
+        d = parse_json_best_effort(working_row.get(col))
+
+        # Inject the "self" variable with FINAL content
+        if is_dict:
+            L += [f"# {var_name} from Working Sheet → {col} (dict)",
+                  f"{var_name} = {py_literal(d)}", ""]
         else:
-            L += [f"# {json_col} is empty or invalid JSON; skipping JSON injection for '{svc}'",
-                  f"{var_name} = json.dumps({{}}, ensure_ascii=False)", ""]
+            L += [f"# {var_name} from Working Sheet → {col} (JSON string)",
+                  f"{var_name} = json.dumps({py_literal(d)}, ensure_ascii=False)", ""]
 
-        # Paste live FINAL code (if any)
+        # Paste live FINAL code
+        code_str = code_map_final.get(svc, "")
         if code_str:
             code_str = reescape_newlines_inside_string_literals(code_str).strip()
             date_upd, resp = meta_map_final.get(svc, ("", ""))
@@ -802,22 +674,14 @@ def build_initiate_final_dbs_cell_ws(
         else:
             L += [f"# (No final-DB code in code sheet for service '{svc}')", ""]
 
-        # Best-effort invocation
-        maybe_func = f"port_{svc}_final_db"
-        L += [
-            f"try:",
-            f"    {maybe_func}({var_name})",
-            f"    print('Invoked {maybe_func} successfully.')",
-            f"except NameError:",
-            f"    print(\"No callable '{maybe_func}' found; please invoke the appropriate function manually.\")",
-            f"except Exception as e:",
-            f"    print('Error while invoking {maybe_func}:', e)",
-            ""
-        ]
+        # Re-run same pre_call_lines to wire variables → call the SAME function as initial
+        for ln in spec.get("pre_call_lines", []): L.append(ln)
+        if spec.get("pre_call_lines"): L.append("")
+        calls.append(spec["call"])
 
+    if calls:
+        L += ["# Execute final porting"] + calls
     return new_code_cell("\n".join(L) + "\n")
-
-# -----------------------------------------------------------------------------
 
 def build_final_assertion_cell(working_row: Dict[str, str]) -> nbformat.NotebookNode:
     code = (working_row.get("final_assertion_code") or "").strip()
@@ -827,16 +691,11 @@ def build_final_assertion_cell(working_row: Dict[str, str]) -> nbformat.Notebook
 def build_empty_block(title: str):
     return [new_markdown_cell(f"# {title}"), new_code_cell("")]
 
-# ---------- Preflight & parsing (initial selection driven by Template Colab)
+# ---------- Preflight on Template row
 
 def preflight_row(template_row: Dict[str, str]) -> Dict[str, Any]:
-    """
-    Select services by *_initial_db presence in the Template Colab row; add dependencies; validate inputs.
-    """
     issues = {"unknown_services": [], "missing_inputs": [], "json_errors": {}}
-
     services = services_from_initial_db_columns(template_row)
-
     expanded = list(services)
     for s in services:
         spec = SERVICE_SPECS.get(s)
@@ -844,9 +703,7 @@ def preflight_row(template_row: Dict[str, str]) -> Dict[str, Any]:
             for req in spec["requires"]:
                 if req not in expanded:
                     expanded.append(req)
-
     issues["unknown_services"] = [s for s in expanded if s not in SERVICE_SPECS]
-
     need = sorted({c for s in expanded for c in REQUIRED_INPUTS.get(s, [])})
     for col in need:
         v = template_row.get(col, "")
@@ -869,50 +726,42 @@ def generate_notebook_for_row_ws(
     pipinstall_cell: str,
     code_map_initial: Dict[str, str],
     meta_map_initial: Dict[str, Tuple[str, str]],
-    code_map_final: Dict[str, str],     # >>> added
-    meta_map_final: Dict[str, Tuple[str, str]],  # >>> added
+    code_map_final: Dict[str, str],
+    meta_map_final: Dict[str, Tuple[str, str]],
 ) -> Tuple[nbformat.NotebookNode, Dict[str, Any]]:
     pre = preflight_row(template_row)
-    services = pre["services"]
-    expanded = pre["expanded"]
-    issues = pre["issues"]
+    services = pre["services"]; expanded = pre["expanded"]; issues = pre["issues"]
 
-    # API modules list (respect implicit deps order)
     api_modules: List[str] = []
     for s in services:
         spec = SERVICE_SPECS.get(s)
-        if not spec:
-            continue
+        if not spec: continue
         api = spec["api"]
-        if api not in api_modules:
-            api_modules.append(api)
+        if api not in api_modules: api_modules.append(api)
         for req in spec.get("requires", []):
             ra = SERVICE_SPECS[req]["api"]
-            if ra not in api_modules:
-                api_modules.append(ra)
+            if ra not in api_modules: api_modules.append(ra)
 
-    task_id = (working_row.get("task_id") or f"row-{idx}").strip() or f"row-{idx}"
-    query_text = (working_row.get("query") or "").strip()
+    task_id   = (working_row.get("task_id") or f"row-{idx}").strip() or f"row-{idx}"
+    query_txt = (working_row.get("query") or "").strip()
+
     nb = new_notebook()
-    nb.cells.append(build_metadata_cell(task_id, query_text, api_modules))
+    nb.cells.append(build_metadata_cell(task_id, query_txt, api_modules))
     w = build_warnings_cell(issues)
-    if w:
-        nb.cells.append(w)
+    if w: nb.cells.append(w)
     nb.cells.append(new_markdown_cell("# Set Up"))
     nb.cells.extend(build_setup_cells(setup_cell, pipinstall_cell))
     nb.cells.append(new_markdown_cell("## Import APIs and initiate DBs"))
-    nb.cells.append(
-        build_import_and_port_cell_ws(api_modules, expanded, working_row, template_row, code_map_initial, meta_map_initial)
-    )
+    nb.cells.append(build_import_and_port_cell_ws(api_modules, expanded, working_row, template_row, code_map_initial, meta_map_initial))
 
-    # >>> FINAL-DB: add section just before Final Assertion
+    # Initial & Action blocks empty
+    nb.cells.extend(build_empty_block("Initial Assertion"))
+    nb.cells.extend(build_empty_block("Action"))
+
+    # >>> FINAL-DB section is HERE (after Action, before Final Assertion)
     nb.cells.append(new_markdown_cell("## Initiate Final DBs"))
     final_services = split_services(working_row.get("final_state_changes_needed", ""))
     nb.cells.append(build_initiate_final_dbs_cell_ws(final_services, working_row, code_map_final, meta_map_final))
-
-    # Initial & Action empty
-    nb.cells.extend(build_empty_block("Initial Assertion"))
-    nb.cells.extend(build_empty_block("Action"))
 
     # Final Assertion populated from Working Sheet
     nb.cells.append(new_markdown_cell("# Final Assertion"))
@@ -922,7 +771,7 @@ def generate_notebook_for_row_ws(
     nb.metadata["language_info"] = {"name": "python"}
     return nb, issues
 
-# ---------- Main flow
+# ---------- Main
 
 def main():
     if not SPREADSHEET_ID:
@@ -930,20 +779,16 @@ def main():
     if not CODE_SHEET_NAME:
         raise RuntimeError("CODE_SHEET_NAME is required. Set os.environ['CODE_SHEET_NAME'].")
 
-    # Mount & import your codebase (static cells)
     setup_cell, pipinstall_cell = mount_and_import_codebase()
     log.info("Mounted Drive and imported static setup cells from %s", CODEBASE_ROOT)
 
-    # Auth to Google APIs
     drive, sheets = auth_services()
     log.info("Authenticated to Google Drive & Sheets APIs.")
 
-    # Resolve output folder (ID or name) and empty it
     out_folder_id = resolve_output_folder_id(drive, WS_OUT_FOLDER_NAME, CODEBASE_FOLDER_NAME)
     log.info("Output notebooks Drive folder id: %s", out_folder_id)
     empty_drive_folder(drive, out_folder_id)
 
-    # Read Working Sheet rows
     ws_name = SOURCE_WORKING_SHEET_NAME or get_first_sheet_title(sheets, SPREADSHEET_ID)
     log.info("Reading Working Sheet rows from '%s' (spreadsheet id: %s)", ws_name, SPREADSHEET_ID)
     ws_headers, ws_rows = read_sheet_as_dicts(sheets, SPREADSHEET_ID, ws_name)
@@ -952,34 +797,27 @@ def main():
         return
     log.info("Loaded %d working rows.", len(ws_rows))
 
-    # Read Template Colab rows (initial DBs live here)
     templ_name = SOURCE_SHEET_NAME or get_first_sheet_title(sheets, SPREADSHEET_ID)
     log.info("Reading Template Colab rows from '%s'", templ_name)
     templ_headers, templ_rows = read_sheet_as_dicts(sheets, SPREADSHEET_ID, templ_name)
-    templ_by_task: Dict[str, Dict[str, str]] = {}
-    for r in templ_rows:
-        rid = (r.get("task_id") or "").strip()
-        if rid:
-            templ_by_task[rid] = r
+    templ_by_task: Dict[str, Dict[str, str]] = { (r.get("task_id") or "").strip(): r for r in templ_rows if (r.get("task_id") or "").strip() }
 
-    # Build initial (function_to_translate_json) code map
     code_sheet_id = CODE_SPREADSHEET_ID or SPREADSHEET_ID
-    log.info("Reading INITIAL porting code from '%s' tab in spreadsheet id %s", CODE_SHEET_NAME, code_sheet_id)
+    log.info("Reading INITIAL porting code from '%s' in spreadsheet id %s", CODE_SHEET_NAME, code_sheet_id)
     code_map_initial, meta_map_initial = build_service_code_map_with_logs(
         sheets,
         spreadsheet_id=code_sheet_id,
         code_sheet_name=CODE_SHEET_NAME,
-        code_col_candidates=["function_to_translate_json", "code", "porting_code", "port_code"],
+        code_col_candidates=["function_to_translate_json","code","porting_code","port_code"],
     )
     log.info("Prepared INITIAL porting code for %d services.", len(code_map_initial))
 
-    # >>> FINAL-DB: Build final (function_to_translate_json_finalDB) code map
-    log.info("Reading FINAL-DB porting code from '%s' tab in spreadsheet id %s", CODE_SHEET_NAME, code_sheet_id)
+    log.info("Reading FINAL-DB porting code from '%s' in spreadsheet id %s", CODE_SHEET_NAME, code_sheet_id)
     code_map_final, meta_map_final = build_service_code_map_with_logs(
         sheets,
         spreadsheet_id=code_sheet_id,
         code_sheet_name=CODE_SHEET_NAME,
-        code_col_candidates=["function_to_translate_json_finalDB", "final_db_code", "final_porting_code"],
+        code_col_candidates=["function_to_translate_json_finalDB","final_db_code","final_porting_code"],
     )
     log.info("Prepared FINAL-DB porting code for %d services.", len(code_map_final))
 
@@ -991,7 +829,6 @@ def main():
         query_order = (wrow.get("query_order") or "").strip()
         fname = f"Gemini_Apps_Data_Port_{task_id}_turn{query_order or '1'}.ipynb"
 
-        # Match Template row by task_id (for initial DBs)
         trow = templ_by_task.get(task_id, {})
         selected_services = services_from_initial_db_columns(trow)
         log.info("---- Generating notebook for task_id=%s ----", task_id)
@@ -1000,14 +837,13 @@ def main():
         nb, issues = generate_notebook_for_row_ws(
             wrow, trow, i, setup_cell, pipinstall_cell,
             code_map_initial, meta_map_initial,
-            code_map_final, meta_map_final,   # >>> FINAL-DB maps
+            code_map_final,  meta_map_final,
         )
 
         _, colab_url = upload_notebook_to_drive(drive, out_folder_id, fname, nb)
         log.info("Uploaded: %s", fname)
         log.info("Colab URL: %s", colab_url)
 
-        # Keep services_needed string from Working Sheet (for summary)
         services_required_for_summary = (wrow.get("services_needed") or "").strip()
         rows_3col.append([task_id, services_required_for_summary, colab_url])
 
@@ -1021,14 +857,10 @@ def main():
                 for col, err in issues["json_errors"].items():
                     log.warning("JSON error in %s for %s: %s", col, task_id, err)
 
-    # Write summary tab back to spreadsheet (now 5 columns including refresh_date/time)
     upsert_summary_sheet_3col_ws(sheets, SPREADSHEET_ID, SUMMARY_SHEET_NAME_WORKING_AUTOMATION, rows_3col)
     log.info("Wrote summary tab '%s' with %d rows.", SUMMARY_SHEET_NAME_WORKING_AUTOMATION, len(rows_3col))
 
-    if problems:
-        log.info("Completed with warnings on %d row(s). See log above.", len(problems))
-    else:
-        log.info("Completed successfully with no warnings.")
+    log.info("Completed with %s.", "warnings" if problems else "no warnings")
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()

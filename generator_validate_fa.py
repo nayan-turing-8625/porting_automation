@@ -827,7 +827,7 @@ def main():
     for i, wrow in enumerate(ws_rows, start=1):
         task_id = (wrow.get("task_id") or f"row-{i}").strip() or f"row-{i}"
         query_order = (wrow.get("query_order") or "").strip()
-        fname = f"Gemini_Apps_Data_Port_{task_id}_turn{query_order or '1'}.ipynb"
+        fname = f"Gemini_Apps_Data_Port_{task_id}_turn_{query_order or '1'}.ipynb"
 
         trow = templ_by_task.get(task_id, {})
         selected_services = services_from_initial_db_columns(trow)

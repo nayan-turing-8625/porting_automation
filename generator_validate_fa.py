@@ -1,23 +1,17 @@
-# generator_working_sample.py
-# Working Sheet → Colab notebooks in Drive + summary tab (code read from sheet cells)
-# Keeps all existing behavior and adds a robust "Initiate Final DBs" section:
-# - Section sits AFTER "Action" and BEFORE "Final Assertion"
-# - Injects JSON from Working Sheet columns: ported_<service>_final_db
-# - Uses SAME pre_call_lines and SAME call as the initial stage (e.g., port_db_whatsapp_and_contacts)
-# - Pulls final-DB code from Translate_JSONs:function_to_translate_json_finalDB (latest per service)
-# - USER_LOCATION env var still injected from Working Sheet
+# generator_working_sample_parallel.py
+# Working Sheet → Colab notebooks in Drive (parallel) + summary tab (PST timestamp)
+# CHANGES in this version:
+#   • Final DB JSONs read from <service>_final_db (no "ported_" prefix), from Working Sheet
+#   • Notebook filename is taken ONLY from Working Sheet column "Sample ID"
+#   • Summary sheet includes Sample ID
+# Everything else preserved.
 
 from __future__ import annotations
 
-import os
-import sys
-import re
-import json
-import ast
-import pprint
-import logging
+import os, sys, re, json, ast, time, pprint, logging, traceback
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import nbformat
 from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
@@ -26,6 +20,7 @@ from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
 from google.colab import auth, drive as gdrive_mount  # type: ignore
 from googleapiclient.discovery import build           # type: ignore
 from googleapiclient.http import MediaInMemoryUpload  # type: ignore
+from googleapiclient.errors import HttpError          # type: ignore
 
 # =========================
 # Config via environment
@@ -34,22 +29,23 @@ SPREADSHEET_ID       = os.environ.get("SPREADSHEET_ID", "").strip()
 SOURCE_SHEET_NAME    = os.environ.get("SOURCE_SHEET_NAME", "Template Colab").strip()
 SOURCE_WORKING_SHEET_NAME = os.environ.get("SOURCE_WORKING_SHEET_NAME", "Working_Sheet").strip()
 
-CODE_SPREADSHEET_ID  = os.environ.get("CODE_SPREADSHEET_ID", "").strip()
+CODE_SPREADSHEET_ID  = os.environ.get("CODE_SPREADSHEET_ID", "").strip()  # optional
 CODE_SHEET_NAME      = os.environ.get("CODE_SHEET_NAME", "Translate_JSONs").strip()
 
 SUMMARY_SHEET_NAME_WORKING_AUTOMATION = os.environ.get(
-    "SUMMARY_SHEET_NAME_WORKING_AUTOMATION_FA_VAL", "Working_Sheet_Generated_Colabs"
+    "SUMMARY_SHEET_NAME_WORKING_AUTOMATION", "Working_Sheet_Generated_Colabs"
 ).strip()
 
-WS_OUT_FOLDER_NAME   = os.environ.get("WS_OUT_FOLDER_NAME_FA_VAL", "generated_colabs_ws").strip()
+WS_OUT_FOLDER_NAME   = os.environ.get("WS_OUT_FOLDER_NAME", "generated_colabs_ws").strip()
+MAX_WORKERS          = int(os.environ.get("MAX_WORKERS", "6"))
 
 # Drive paths
 MYDRIVE_ROOT         = "/content/drive/MyDrive"
-CODEBASE_FOLDER_NAME = "porting_automation"
+CODEBASE_FOLDER_NAME = "port_automation"
 CODEBASE_ROOT        = os.path.join(MYDRIVE_ROOT, CODEBASE_FOLDER_NAME)
 
 # =========================
-# Logging (live in Colab)
+# Logging
 # =========================
 os.environ["PYTHONUNBUFFERED"] = "1"
 try:
@@ -62,10 +58,9 @@ def init_logging(level: str = "INFO") -> logging.Logger:
     root = logging.getLogger()
     for h in root.handlers[:]:
         root.removeHandler(h)
-    lg = logging.getLogger("generator_ws")
+    lg = logging.getLogger("generator_ws_parallel")
     for h in lg.handlers[:]:
         lg.removeHandler(h)
-
     h = logging.StreamHandler(sys.stdout)
     h.setLevel(lvl)
     h.setFormatter(logging.Formatter("%(asctime)s | %(levelname)-8s | %(message)s", "%Y-%m-%d %H:%M:%S"))
@@ -76,7 +71,7 @@ def init_logging(level: str = "INFO") -> logging.Logger:
 log = init_logging("INFO")
 
 # =========================
-# Default DB paths (by API package)
+# Default DB paths
 # =========================
 DEFAULT_DB_PATHS: Dict[str, str] = {
     "contacts":           "DBs/ContactsDefaultDB.json",
@@ -91,7 +86,7 @@ DEFAULT_DB_PATHS: Dict[str, str] = {
 }
 
 # =========================
-# Tracker service → API package (+ implicit deps)
+# Service specs
 # =========================
 SERVICE_SPECS: Dict[str, Dict[str, Any]] = {
     "whatsapp":         {"api": "whatsapp",           "requires": ["contacts"]},
@@ -155,7 +150,7 @@ PORTING_SPECS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# Map service → (its "self" variable name used in initial json_vars, and whether that var is dict)
+# For FINAL DB injection we override the primary var to the service's own var
 SELF_VAR_BY_SERVICE: Dict[str, Tuple[str, bool]] = {
     "whatsapp":        ("whatsapp_src_json", False),
     "contacts":        ("contacts_src_json", False),
@@ -168,21 +163,8 @@ SELF_VAR_BY_SERVICE: Dict[str, Tuple[str, bool]] = {
     "notes":           ("notes_src_json",    False),
 }
 
-# First entry is the primary column to decide initial selection (from Template Colab)
-REQUIRED_INPUTS: Dict[str, List[str]] = {
-    "whatsapp":        ["whatsapp_initial_db", "contacts_initial_db"],
-    "contacts":        ["contacts_initial_db"],
-    "calendar":        ["calendar_initial_db"],
-    "gmail":           ["gmail_initial_db"],
-    "device_settings": ["device_settings_initial_db"],
-    "media_control":   ["media_control_initial_db"],
-    "clock":           ["clock_initial_db"],
-    "reminders":       ["reminders_initial_db"],
-    "notes":           ["notes_initial_db"],
-}
-
 # =========================
-# Helpers
+# Utils
 # =========================
 def mount_and_import_codebase():
     gdrive_mount.mount("/content/drive", force_remount=False)
@@ -234,19 +216,15 @@ def parse_initial_db(cell_value: Optional[str]) -> Dict[str, Any]:
     return json.loads(s)
 
 def parse_json_best_effort(cell_value: Optional[str]) -> Dict[str, Any]:
-    """Accept strict JSON or Python-literal dict/list; fallback to {}."""
     if cell_value is None: return {}
     s = str(cell_value).strip()
     if not s or s.lower() in {"nan","none","null"}: return {}
-    # Try JSON
     try:
         return json.loads(s)
     except Exception:
         pass
-    # Try Python literal (e.g., dict with single quotes)
     try:
         val = ast.literal_eval(s)
-        # Ensure it's JSON-serializable (obj or list)
         if isinstance(val, (dict, list)):
             return val
     except Exception:
@@ -291,7 +269,7 @@ def reescape_newlines_inside_string_literals(src: str) -> str:
         out.append(ch); i+=1
     return "".join(out)
 
-# ---------- Google Drive helpers
+# ---------- Drive helpers
 
 def find_root_folder_id(drive, name: str) -> str:
     q = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false"
@@ -347,16 +325,41 @@ def empty_drive_folder(drive, folder_id: str) -> int:
     log.info("Output folder emptied: %d item(s) removed.", removed)
     return removed
 
-def upload_notebook_to_drive(drive, folder_id: str, filename: str, nb: nbformat.NotebookNode) -> Tuple[str, str]:
-    data = nbformat.writes(nb).encode("utf-8")
-    media = MediaInMemoryUpload(data, mimetype="application/vnd.google.colaboratory", resumable=False)
-    meta = {"name": filename, "mimeType": "application/vnd.google.colaboratory", "parents": [folder_id]}
-    file = drive.files().create(body=meta, media_body=media, fields="id,webViewLink").execute()
-    file_id = file["id"]
-    colab_url = f"https://colab.research.google.com/drive/{file_id}"
-    return file_id, colab_url
+def upload_notebook_to_drive_with_retries(folder_id: str, filename: str, nb: nbformat.NotebookNode,
+                                          max_retries: int = 5, base_delay: float = 1.0) -> Tuple[str, str]:
+    attempt = 0
+    last_err: Optional[Exception] = None
+    while attempt <= max_retries:
+        try:
+            drive = build("drive", "v3")  # fresh per thread
+            data = nbformat.writes(nb).encode("utf-8")
+            media = MediaInMemoryUpload(data, mimetype="application/vnd.google.colaboratory", resumable=False)
+            meta  = {"name": filename, "mimeType": "application/vnd.google.colaboratory", "parents": [folder_id]}
+            file  = drive.files().create(body=meta, media_body=media, fields="id,webViewLink").execute()
+            file_id = file["id"]
+            colab_url = f"https://colab.research.google.com/drive/{file_id}"
+            return file_id, colab_url
+        except HttpError as e:
+            last_err = e
+            status = getattr(e.resp, "status", None)
+            if status in (403, 429, 500, 502, 503, 504):
+                sleep_s = base_delay * (2 ** attempt) + (0.1 * attempt)
+                log.warning("Upload retry %d for %s due to HTTP %s; sleeping %.1fs",
+                            attempt + 1, filename, status, sleep_s)
+                time.sleep(sleep_s)
+                attempt += 1
+                continue
+            raise
+        except Exception as e:
+            last_err = e
+            sleep_s = base_delay * (2 ** attempt) + (0.1 * attempt)
+            log.warning("Upload retry %d for %s after error: %s; sleeping %.1fs",
+                        attempt + 1, filename, e, sleep_s)
+            time.sleep(sleep_s); attempt += 1
+    if last_err: raise last_err
+    raise RuntimeError("Unknown upload failure.")
 
-# ---------- Google Sheets helpers (robust rows)
+# ---------- Sheets helpers
 
 def get_first_sheet_title(sheets, spreadsheet_id: str) -> str:
     meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
@@ -374,7 +377,19 @@ def read_sheet_as_dicts(sheets, spreadsheet_id: str, sheet_name: str) -> Tuple[L
         rows.append(row_dict)
     return headers, rows
 
-# ---------- Initial-selection from Template Colab
+# ---------- Selection by *_initial_db from Template Colab
+
+REQUIRED_INPUTS: Dict[str, List[str]] = {
+    "whatsapp":        ["whatsapp_initial_db", "contacts_initial_db"],
+    "contacts":        ["contacts_initial_db"],
+    "calendar":        ["calendar_initial_db"],
+    "gmail":           ["gmail_initial_db"],
+    "device_settings": ["device_settings_initial_db"],
+    "media_control":   ["media_control_initial_db"],
+    "clock":           ["clock_initial_db"],
+    "reminders":       ["reminders_initial_db"],
+    "notes":           ["notes_initial_db"],
+}
 
 def services_from_initial_db_columns(row: Dict[str, str]) -> List[str]:
     selected: List[str] = []
@@ -385,7 +400,7 @@ def services_from_initial_db_columns(row: Dict[str, str]) -> List[str]:
             selected.append(svc)
     return selected
 
-# ---------- Code sheet readers (initial and final)
+# ---------- Code sheet readers
 
 def _find_header(headers: List[str], candidates: List[str]) -> Optional[str]:
     hnorm = [h.strip().lower() for h in headers]
@@ -464,7 +479,7 @@ def build_service_code_map_with_logs(
                  svc, code_col, chosen_date, chosen_resp)
     return code_map, meta_map
 
-# ---------- Summary writer (PST)
+# ---------- Summary writer (PST) — now includes Sample ID
 
 def _now_pacific() -> Tuple[str, str]:
     try:
@@ -475,7 +490,11 @@ def _now_pacific() -> Tuple[str, str]:
         dt = datetime.now()
     return dt.strftime("%Y-%m-%d"), dt.strftime("%H:%M:%S")
 
-def upsert_summary_sheet_3col_ws(sheets, spreadsheet_id: str, sheet_name: str, rows_3col: List[List[str]]):
+def upsert_summary_sheet_ws(sheets, spreadsheet_id: str, sheet_name: str, rows: List[List[str]]):
+    """
+    Writes headers:
+      sample_id, task_id, services_required, colab_url, refresh_date, refresh_time
+    """
     meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
     existing = {sh["properties"]["title"] for sh in meta.get("sheets", [])}
     if sheet_name not in existing:
@@ -491,10 +510,10 @@ def upsert_summary_sheet_3col_ws(sheets, spreadsheet_id: str, sheet_name: str, r
         log.info("Cleared existing rows in summary sheet tab: %s", sheet_name)
 
     refresh_date, refresh_time = _now_pacific()
-    rows_5col = [r + [refresh_date, refresh_time] for r in rows_3col]
+    rows6 = [r + [refresh_date, refresh_time] for r in rows]
 
-    headers = ["task_id", "services_required", "colab_url", "refresh_date", "refresh_time"]
-    body = {"range": f"'{sheet_name}'!A1", "majorDimension": "ROWS", "values": [headers] + rows_5col}
+    headers = ["sample_id", "task_id", "services_required", "colab_url", "refresh_date", "refresh_time"]
+    body = {"range": f"'{sheet_name}'!A1", "majorDimension": "ROWS", "values": [headers] + rows6}
     sheets.spreadsheets().values().update(
         spreadsheetId=spreadsheet_id,
         range=f"'{sheet_name}'!A1",
@@ -508,7 +527,7 @@ def upsert_summary_sheet_3col_ws(sheets, spreadsheet_id: str, sheet_name: str, r
         if sh["properties"]["title"] == sheet_name:
             sheet_id = sh["properties"]["sheetId"]; break
     if sheet_id is not None:
-        row_count = len(rows_5col) + 1
+        row_count = len(rows6) + 1
         req = [{
             "updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": 0, "endIndex": row_count},
@@ -520,10 +539,10 @@ def upsert_summary_sheet_3col_ws(sheets, spreadsheet_id: str, sheet_name: str, r
 
 # ---------- Notebook builders
 
-def build_metadata_cell(task_id: str, query_text: str, api_modules: List[str]):
+def build_metadata_cell(sample_id: str, query_text: str, api_modules: List[str]):
     md = [
-        f"**Sample ID**: {task_id}\n\n",
-        f"**Query**: {query_text or ''}\n\n",           # same line
+        f"**Sample ID**: {sample_id}\n\n",
+        f"**Query**: {query_text or ''}\n\n",
         "**DB Type**: Base Case\n\n",
         "**Case Description**:\n\n",
         "**Global/Context Variables:**\n\n",
@@ -618,9 +637,8 @@ def build_import_and_port_cell_ws(
         L += ["# Execute initial porting"] + calls
     return new_code_cell("\n".join(L) + "\n")
 
-# --------- FINAL-DB SECTION (AFTER Action, BEFORE Final Assertion)
-
 def final_db_col_for_service(svc: str) -> str:
+    """Working Sheet FINAL DB column — now '<service>_final_db' (no 'ported_' prefix)."""
     return f"{svc}_final_db"
 
 def build_initiate_final_dbs_cell_ws(
@@ -637,8 +655,8 @@ def build_initiate_final_dbs_cell_ws(
 
     calls: List[str] = []
 
-    for svc in final_services:
-        svc = normalize_service_token(svc)
+    for svc_raw in final_services:
+        svc = normalize_service_token(svc_raw)
         spec = PORTING_SPECS.get(svc)
         if not spec:
             L += [f"# (No porting spec defined for '{svc}'; skipping)", ""]
@@ -649,10 +667,8 @@ def build_initiate_final_dbs_cell_ws(
             L += [f"# (Could not determine primary variable for service '{svc}'; skipping)", ""]
             continue
 
-        col = final_db_col_for_service(svc)
+        col = final_db_col_for_service(svc)   # <service>_final_db from Working Sheet
         d = parse_json_best_effort(working_row.get(col))
-
-        # Inject the "self" variable with FINAL content
         if is_dict:
             L += [f"# {var_name} from Working Sheet → {col} (dict)",
                   f"{var_name} = {py_literal(d)}", ""]
@@ -660,7 +676,6 @@ def build_initiate_final_dbs_cell_ws(
             L += [f"# {var_name} from Working Sheet → {col} (JSON string)",
                   f"{var_name} = json.dumps({py_literal(d)}, ensure_ascii=False)", ""]
 
-        # Paste live FINAL code
         code_str = code_map_final.get(svc, "")
         if code_str:
             code_str = reescape_newlines_inside_string_literals(code_str).strip()
@@ -674,7 +689,7 @@ def build_initiate_final_dbs_cell_ws(
         else:
             L += [f"# (No final-DB code in code sheet for service '{svc}')", ""]
 
-        # Re-run same pre_call_lines to wire variables → call the SAME function as initial
+        # IMPORTANT: use the SAME call as initial stage (no special 'final' call)
         for ln in spec.get("pre_call_lines", []): L.append(ln)
         if spec.get("pre_call_lines"): L.append("")
         calls.append(spec["call"])
@@ -691,7 +706,7 @@ def build_final_assertion_cell(working_row: Dict[str, str]) -> nbformat.Notebook
 def build_empty_block(title: str):
     return [new_markdown_cell(f"# {title}"), new_code_cell("")]
 
-# ---------- Preflight on Template row
+# ---------- Preflight & notebook generator
 
 def preflight_row(template_row: Dict[str, str]) -> Dict[str, Any]:
     issues = {"unknown_services": [], "missing_inputs": [], "json_errors": {}}
@@ -716,8 +731,6 @@ def preflight_row(template_row: Dict[str, str]) -> Dict[str, Any]:
                 issues["json_errors"][col] = str(e)
     return {"services": services, "expanded": expanded, "issues": issues}
 
-# ---------- Notebook generation for Working Sheet
-
 def generate_notebook_for_row_ws(
     working_row: Dict[str, str],
     template_row: Dict[str, str],
@@ -728,7 +741,7 @@ def generate_notebook_for_row_ws(
     meta_map_initial: Dict[str, Tuple[str, str]],
     code_map_final: Dict[str, str],
     meta_map_final: Dict[str, Tuple[str, str]],
-) -> Tuple[nbformat.NotebookNode, Dict[str, Any]]:
+) -> Tuple[nbformat.NotebookNode, Dict[str, Any], str]:
     pre = preflight_row(template_row)
     services = pre["services"]; expanded = pre["expanded"]; issues = pre["issues"]
 
@@ -742,11 +755,11 @@ def generate_notebook_for_row_ws(
             ra = SERVICE_SPECS[req]["api"]
             if ra not in api_modules: api_modules.append(ra)
 
-    task_id   = (working_row.get("task_id") or f"row-{idx}").strip() or f"row-{idx}"
+    sample_id = (working_row.get("Sample ID") or working_row.get("sample_id") or working_row.get("SampleID") or "").strip() or f"row-{idx}"
     query_txt = (working_row.get("query") or "").strip()
 
     nb = new_notebook()
-    nb.cells.append(build_metadata_cell(task_id, query_txt, api_modules))
+    nb.cells.append(build_metadata_cell(sample_id, query_txt, api_modules))
     w = build_warnings_cell(issues)
     if w: nb.cells.append(w)
     nb.cells.append(new_markdown_cell("# Set Up"))
@@ -754,22 +767,55 @@ def generate_notebook_for_row_ws(
     nb.cells.append(new_markdown_cell("## Import APIs and initiate DBs"))
     nb.cells.append(build_import_and_port_cell_ws(api_modules, expanded, working_row, template_row, code_map_initial, meta_map_initial))
 
-    # Initial & Action blocks empty
     nb.cells.extend(build_empty_block("Initial Assertion"))
     nb.cells.extend(build_empty_block("Action"))
 
-    # >>> FINAL-DB section is HERE (after Action, before Final Assertion)
     nb.cells.append(new_markdown_cell("## Initiate Final DBs"))
     final_services = split_services(working_row.get("final_state_changes_needed", ""))
     nb.cells.append(build_initiate_final_dbs_cell_ws(final_services, working_row, code_map_final, meta_map_final))
 
-    # Final Assertion populated from Working Sheet
     nb.cells.append(new_markdown_cell("# Final Assertion"))
     nb.cells.append(build_final_assertion_cell(working_row))
 
     nb.metadata["colab"] = {"provenance": []}
     nb.metadata["language_info"] = {"name": "python"}
-    return nb, issues
+    return nb, issues, sample_id
+
+# ---------- Parallel worker
+
+def build_and_upload_worker(
+    idx: int,
+    working_row: Dict[str, str],
+    template_row: Dict[str, str],
+    setup_cell: str,
+    pipinstall_cell: str,
+    code_map_initial: Dict[str, str],
+    meta_map_initial: Dict[str, Tuple[str, str]],
+    code_map_final: Dict[str, str],
+    meta_map_final: Dict[str, Tuple[str, str]],
+    out_folder_id: str,
+):
+    """Return (idx, sample_id, task_id, services_required_for_summary, colab_url, issues_or_None, error_or_None)."""
+    task_id = (working_row.get("task_id") or f"row-{idx}").strip() or f"row-{idx}"
+
+    try:
+        nb, issues, sample_id = generate_notebook_for_row_ws(
+            working_row, template_row, idx, setup_cell, pipinstall_cell,
+            code_map_initial, meta_map_initial, code_map_final, meta_map_final
+        )
+
+        # Filename: ONLY Sample ID
+        safe_name = re.sub(r"[\\/:*?\"<>|]+", "_", sample_id).strip() or f"row-{idx}"
+        fname = f"{safe_name}.ipynb"
+
+        _, colab_url = upload_notebook_to_drive_with_retries(out_folder_id, fname, nb)
+        services_required_for_summary = (working_row.get("services_needed") or "").strip()
+        return (idx, sample_id, task_id, services_required_for_summary, colab_url, issues, None)
+    except Exception as e:
+        tb = traceback.format_exc()
+        log.error("Worker failed for task_id=%s: %s\n%s", task_id, e, tb)
+        sample_id = (working_row.get("Sample ID") or f"row-{idx}").strip()
+        return (idx, sample_id, task_id, (working_row.get("services_needed") or "").strip(), "", None, e)
 
 # ---------- Main
 
@@ -791,7 +837,7 @@ def main():
 
     ws_name = SOURCE_WORKING_SHEET_NAME or get_first_sheet_title(sheets, SPREADSHEET_ID)
     log.info("Reading Working Sheet rows from '%s' (spreadsheet id: %s)", ws_name, SPREADSHEET_ID)
-    ws_headers, ws_rows = read_sheet_as_dicts(sheets, SPREADSHEET_ID, ws_name)
+    _, ws_rows = read_sheet_as_dicts(sheets, SPREADSHEET_ID, ws_name)
     if not ws_rows:
         log.warning("No data found in Working Sheet.")
         return
@@ -799,11 +845,11 @@ def main():
 
     templ_name = SOURCE_SHEET_NAME or get_first_sheet_title(sheets, SPREADSHEET_ID)
     log.info("Reading Template Colab rows from '%s'", templ_name)
-    templ_headers, templ_rows = read_sheet_as_dicts(sheets, SPREADSHEET_ID, templ_name)
+    _, templ_rows = read_sheet_as_dicts(sheets, SPREADSHEET_ID, templ_name)
     templ_by_task: Dict[str, Dict[str, str]] = { (r.get("task_id") or "").strip(): r for r in templ_rows if (r.get("task_id") or "").strip() }
 
     code_sheet_id = CODE_SPREADSHEET_ID or SPREADSHEET_ID
-    log.info("Reading INITIAL porting code from '%s' in spreadsheet id %s", CODE_SHEET_NAME, code_sheet_id)
+    log.info("Reading INITIAL porting code from '%s' (spreadsheet id: %s)", CODE_SHEET_NAME, code_sheet_id)
     code_map_initial, meta_map_initial = build_service_code_map_with_logs(
         sheets,
         spreadsheet_id=code_sheet_id,
@@ -812,7 +858,7 @@ def main():
     )
     log.info("Prepared INITIAL porting code for %d services.", len(code_map_initial))
 
-    log.info("Reading FINAL-DB porting code from '%s' in spreadsheet id %s", CODE_SHEET_NAME, code_sheet_id)
+    log.info("Reading FINAL-DB porting code from '%s' (spreadsheet id: %s)", CODE_SHEET_NAME, code_sheet_id)
     code_map_final, meta_map_final = build_service_code_map_with_logs(
         sheets,
         spreadsheet_id=code_sheet_id,
@@ -821,46 +867,60 @@ def main():
     )
     log.info("Prepared FINAL-DB porting code for %d services.", len(code_map_final))
 
-    rows_3col: List[List[str]] = []
-    problems: List[Tuple[str, Dict[str, Any]]] = []
+    # Parallel build+upload
+    start = time.time()
+    rows_for_summary: List[Tuple[int, str, str, str, str]] = []  # (idx, sample_id, task_id, services, url)
+    problems_cnt = 0
 
+    work_items = []
     for i, wrow in enumerate(ws_rows, start=1):
         task_id = (wrow.get("task_id") or f"row-{i}").strip() or f"row-{i}"
-        query_order = (wrow.get("query_order") or "").strip()
-        fname = f"Gemini_Apps_Data_Port_{task_id}_turn_{query_order or '1'}.ipynb"
-
         trow = templ_by_task.get(task_id, {})
-        selected_services = services_from_initial_db_columns(trow)
-        log.info("---- Generating notebook for task_id=%s ----", task_id)
-        log.info("Selected services (from Template *_initial_db): %s", " | ".join(selected_services) if selected_services else "(none)")
+        work_items.append((i, wrow, trow))
 
-        nb, issues = generate_notebook_for_row_ws(
-            wrow, trow, i, setup_cell, pipinstall_cell,
-            code_map_initial, meta_map_initial,
-            code_map_final,  meta_map_final,
-        )
+    log.info("Starting parallel build/upload with %d worker(s)…", MAX_WORKERS)
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="ws") as ex:
+        futures = [
+            ex.submit(
+                build_and_upload_worker,
+                i, wrow, trow,
+                setup_cell, pipinstall_cell,
+                code_map_initial, meta_map_initial,
+                code_map_final,  meta_map_final,
+                out_folder_id,
+            )
+            for (i, wrow, trow) in work_items
+        ]
 
-        _, colab_url = upload_notebook_to_drive(drive, out_folder_id, fname, nb)
-        log.info("Uploaded: %s", fname)
-        log.info("Colab URL: %s", colab_url)
+        for fut in as_completed(futures):
+            idx, sample_id, task_id, services_required, colab_url, issues, err = fut.result()
+            if err is None:
+                rows_for_summary.append((idx, sample_id, task_id, services_required, colab_url))
+                if issues and (issues.get("unknown_services") or issues.get("missing_inputs") or issues.get("json_errors")):
+                    problems_cnt += 1
+                    if issues["unknown_services"]:
+                        log.warning("Unknown services for %s: %s", task_id, ", ".join(issues["unknown_services"]))
+                    if issues["missing_inputs"]:
+                        log.warning("Missing inputs for %s: %s", task_id, ", ".join(issues["missing_inputs"]))
+                    if issues["json_errors"]:
+                        for col, err_txt in issues["json_errors"].items():
+                            log.warning("JSON error in %s for %s: %s", col, task_id, err_txt)
+                log.info("✔ Uploaded %s (%s) → %s", sample_id, task_id, colab_url)
+            else:
+                problems_cnt += 1
+                rows_for_summary.append((idx, sample_id, task_id, services_required, ""))  # keep row; empty URL on failure
+                log.error("✖ Failed %s / %s (kept in summary with empty URL).", sample_id, task_id)
 
-        services_required_for_summary = (wrow.get("services_needed") or "").strip()
-        rows_3col.append([task_id, services_required_for_summary, colab_url])
+    # Reorder rows back to original order
+    rows_for_summary.sort(key=lambda x: x[0])
+    rows_final = [[sample_id, task_id, services, url] for _, sample_id, task_id, services, url in rows_for_summary]
 
-        if issues["unknown_services"] or issues["missing_inputs"] or issues["json_errors"]:
-            problems.append((task_id, issues))
-            if issues["unknown_services"]:
-                log.warning("Unknown services for %s: %s", task_id, ", ".join(issues["unknown_services"]))
-            if issues["missing_inputs"]:
-                log.warning("Missing inputs for %s: %s", task_id, ", ".join(issues["missing_inputs"]))
-            if issues["json_errors"]:
-                for col, err in issues["json_errors"].items():
-                    log.warning("JSON error in %s for %s: %s", col, task_id, err)
+    # Write summary (includes PST refresh columns)
+    sheets = build("sheets", "v4")  # fresh single-thread client
+    upsert_summary_sheet_ws(sheets, SPREADSHEET_ID, SUMMARY_SHEET_NAME_WORKING_AUTOMATION, rows_final)
 
-    upsert_summary_sheet_3col_ws(sheets, SPREADSHEET_ID, SUMMARY_SHEET_NAME_WORKING_AUTOMATION, rows_3col)
-    log.info("Wrote summary tab '%s' with %d rows.", SUMMARY_SHEET_NAME_WORKING_AUTOMATION, len(rows_3col))
+    elapsed = time.time() - start
+    log.info("Parallel generation complete in %.1fs with %d problem row(s).", elapsed, problems_cnt)
 
-    log.info("Completed with %s.", "warnings" if problems else "no warnings")
-
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()

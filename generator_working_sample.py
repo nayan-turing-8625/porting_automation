@@ -262,7 +262,7 @@ def main():
         log.info("Query: %s", (merged_row.get("query") or "").strip())
 
         nb, issues = generate_notebook_for_row(merged_row, i, setup_cell, pipinstall_cell, code_map, meta_map)
-        fname = f"Gemini_Apps_Data_Port_{task_id}_turn{query_order}.ipynb"
+        fname = f"Gemini_Apps_Data_Port_{task_id}_turn_{query_order}.ipynb"
         _, colab_url = upload_notebook_to_drive(drive, out_folder_id, fname, nb)
         log.info("Uploaded: %s", fname)
         log.info("Colab URL: %s", colab_url)

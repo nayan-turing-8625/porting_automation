@@ -621,7 +621,7 @@ def build_import_and_port_cell_ws(
 # --------- FINAL-DB SECTION (AFTER Action, BEFORE Final Assertion)
 
 def final_db_col_for_service(svc: str) -> str:
-    return f"ported_{svc}_final_db"
+    return f"{svc}_final_db"
 
 def build_initiate_final_dbs_cell_ws(
     final_services: List[str],

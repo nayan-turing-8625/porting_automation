@@ -1,14 +1,17 @@
 # generator_working_sample_parallel.py
 # Working Sheet → Colab notebooks in Drive (parallel) + summary tab (PST timestamp)
-# Change requests implemented:
-#  1) Final Assertion code selected dynamically from sheet using env-provided column names:
-#       - MODIFIED_FINAL_ASSERTION_COL_NAME (preferred if non-empty)
-#       - FINAL_ASSERTION_COL_NAME (fallback)
-#  2) For initial porting: use only services present in Template Colab 'services_needed'
-#     for code/calls; still load any dependency inputs through that service's json_vars.
-#  3) Final DB: unchanged logic (uses final_state_changes_needed; same porting calls).
+# Fixes:
+#  1) Final DB porting (function code + JSONs) moved into the Action block (removed "Initiate Final DBs").
+#  2) Final DB JSONs are read from ported_<service>_final_db.
+#  3) USER_LOCATION is sanitized to a single line before injection.
 #
-# All other behavior preserved.
+# Existing behavior preserved:
+#  • Initial code pasted/called ONLY for explicit services in Template Colab 'services_needed'
+#    (dependencies still injected via json_vars for that service).
+#  • Final DB stage uses the SAME porting call signatures as the initial stage.
+#  • Final Assertion code chosen dynamically from env-provided column names
+#    (MODIFIED_FINAL_ASSERTION_COL_NAME preferred over FINAL_ASSERTION_COL_NAME).
+#  • Parallel generation, Drive/Sheets I/O, logging, summary (PST) unchanged.
 
 from __future__ import annotations
 
@@ -43,7 +46,7 @@ SUMMARY_SHEET_NAME_WORKING_AUTOMATION = os.environ.get(
 WS_OUT_FOLDER_NAME   = os.environ.get("WS_OUT_FOLDER_NAME_FA_VAL", "generated_colabs_ws").strip()
 MAX_WORKERS          = int(os.environ.get("MAX_WORKERS", "6"))
 
-# NEW: Final-assertion column names (provided as envs; dynamic)
+# Final-assertion column names (env-controlled)
 FINAL_ASSERTION_COL_NAME = os.environ.get("FINAL_ASSERTION_COL_NAME", "final_assertion_code").strip()
 MODIFIED_FINAL_ASSERTION_COL_NAME = os.environ.get("MODIFIED_FINAL_ASSERTION_COL_NAME", "modified_final_assertion_code").strip()
 
@@ -593,8 +596,10 @@ def build_import_and_port_cell_ws(
         L.append("from typing import Dict, Any")
         L.append("from datetime import timezone")
     L += ["import json, uuid", "from datetime import datetime", "import os", ""]
-    # USER_LOCATION injection (unchanged)
-    user_loc_val = (user_location_value or "").replace("\\", "\\\\").replace('"', '\\"')
+    # USER_LOCATION injection (force single line, escape)
+    raw_loc = str(user_location_value or "")
+    single_line = " ".join(raw_loc.split())  # collapses all whitespace/newlines to single spaces
+    user_loc_val = single_line.replace("\\", "\\\\").replace('"', '\\"')
     L.append('# User location from Working Sheet')
     L.append(f'os.environ["USER_LOCATION"] = "{user_loc_val}"')
     L.append("")
@@ -613,8 +618,7 @@ def build_import_and_port_cell_ws(
             L += [f"# (No porting spec defined for '{svc}'; skipping)", ""]
             continue
 
-        # Inject inputs — from TEMPLATE row (spec for the selected service
-        # already lists any dependency initial DBs it needs)
+        # Inject inputs — from TEMPLATE row
         for col, var, as_dict in spec.get("json_vars", []):
             try:
                 d = parse_initial_db(template_row.get(col))
@@ -625,7 +629,7 @@ def build_import_and_port_cell_ws(
             else:
                 L += [f"# {var} from Template Colab → {col} (JSON string)", f"{var} = json.dumps({py_literal(d)}, ensure_ascii=False)", ""]
 
-        # Paste live code with meta line (initial) — ONLY for the explicit service
+        # Paste live code with meta line (initial) — ONLY for explicit service
         code_str = code_map_initial.get(svc, "")
         if code_str:
             code_str = reescape_newlines_inside_string_literals(code_str).strip()
@@ -647,22 +651,26 @@ def build_import_and_port_cell_ws(
     return new_code_cell("\n".join(L) + "\n")
 
 def final_db_col_for_service(svc: str) -> str:
-    """Working Sheet FINAL DB column — '<service>_final_db' (no 'ported_' prefix)."""
-    return f"{svc}_final_db"
+    """Working Sheet FINAL DB column — now 'ported_<service>_final_db'."""
+    return f"ported_{svc}_final_db"
 
-def build_initiate_final_dbs_cell_ws(
+def build_action_final_dbs_cell_ws(
     final_services: List[str],
     working_row: Dict[str, str],
     code_map_final: Dict[str, str],
     meta_map_final: Dict[str, Tuple[str, str]],
 ):
+    """
+    Builds the Action block code cell that applies FINAL DB changes.
+    Uses SAME porting calls as initial stage.
+    """
     L: List[str] = []
-    L.append("# Initiate Final DBs")
-    if not final_services:
-        L += ["# (No final state changes required for this task)", ""]
-        return new_code_cell("\n".join(L) + "\n")
-
     calls: List[str] = []
+
+    if not final_services:
+        # Keep Action block present but harmless
+        L += ["# No final state changes requested for this task.", ""]
+        return new_code_cell("\n".join(L) + "\n")
 
     for svc_raw in final_services:
         svc = normalize_service_token(svc_raw)
@@ -676,7 +684,7 @@ def build_initiate_final_dbs_cell_ws(
             L += [f"# (Could not determine primary variable for service '{svc}'; skipping)", ""]
             continue
 
-        col = final_db_col_for_service(svc)   # <service>_final_db from Working Sheet
+        col = final_db_col_for_service(svc)   # ported_<service>_final_db from Working Sheet
         d = parse_json_best_effort(working_row.get(col))
         if is_dict:
             L += [f"# {var_name} from Working Sheet → {col} (dict)",
@@ -698,7 +706,7 @@ def build_initiate_final_dbs_cell_ws(
         else:
             L += [f"# (No final-DB code in code sheet for service '{svc}')", ""]
 
-        # IMPORTANT: use the SAME call as initial stage (no special 'final' call)
+        # Use SAME call as initial stage
         for ln in spec.get("pre_call_lines", []): L.append(ln)
         if spec.get("pre_call_lines"): L.append("")
         calls.append(spec["call"])
@@ -764,7 +772,6 @@ def generate_notebook_for_row_ws(
 ) -> Tuple[nbformat.NotebookNode, Dict[str, Any], str]:
     # Determine explicit services from Template Colab 'services_needed'
     services_needed = split_services(template_row.get("services_needed", ""))
-    # Fallback (very rare): derive from *_initial_db presence
     if not services_needed:
         services_needed = services_from_initial_db_columns(template_row)
 
@@ -803,11 +810,11 @@ def generate_notebook_for_row_ws(
     )
 
     nb.cells.extend(build_empty_block("Initial Assertion"))
-    nb.cells.extend(build_empty_block("Action"))
 
-    nb.cells.append(new_markdown_cell("## Initiate Final DBs"))
+    # Action block now contains FINAL DB porting
+    nb.cells.append(new_markdown_cell("# Action"))
     final_services = split_services(working_row.get("final_state_changes_needed", ""))
-    nb.cells.append(build_initiate_final_dbs_cell_ws(final_services, working_row, code_map_final, meta_map_final))
+    nb.cells.append(build_action_final_dbs_cell_ws(final_services, working_row, code_map_final, meta_map_final))
 
     nb.cells.append(new_markdown_cell("# Final Assertion"))
     nb.cells.append(build_final_assertion_cell(working_row))

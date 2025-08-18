@@ -1,10 +1,14 @@
 # generator_working_sample_parallel.py
 # Working Sheet → Colab notebooks in Drive (parallel) + summary tab (PST timestamp)
-# CHANGES in this version:
-#   • Final DB JSONs read from <service>_final_db (no "ported_" prefix), from Working Sheet
-#   • Notebook filename is taken ONLY from Working Sheet column "Sample ID"
-#   • Summary sheet includes Sample ID
-# Everything else preserved.
+# Change requests implemented:
+#  1) Final Assertion code selected dynamically from sheet using env-provided column names:
+#       - MODIFIED_FINAL_ASSERTION_COL_NAME (preferred if non-empty)
+#       - FINAL_ASSERTION_COL_NAME (fallback)
+#  2) For initial porting: use only services present in Template Colab 'services_needed'
+#     for code/calls; still load any dependency inputs through that service's json_vars.
+#  3) Final DB: unchanged logic (uses final_state_changes_needed; same porting calls).
+#
+# All other behavior preserved.
 
 from __future__ import annotations
 
@@ -38,6 +42,10 @@ SUMMARY_SHEET_NAME_WORKING_AUTOMATION = os.environ.get(
 
 WS_OUT_FOLDER_NAME   = os.environ.get("WS_OUT_FOLDER_NAME_FA_VAL", "generated_colabs_ws").strip()
 MAX_WORKERS          = int(os.environ.get("MAX_WORKERS", "6"))
+
+# NEW: Final-assertion column names (provided as envs; dynamic)
+FINAL_ASSERTION_COL_NAME = os.environ.get("FINAL_ASSERTION_COL_NAME", "final_assertion_code").strip()
+MODIFIED_FINAL_ASSERTION_COL_NAME = os.environ.get("MODIFIED_FINAL_ASSERTION_COL_NAME", "modified_final_assertion_code").strip()
 
 # Drive paths
 MYDRIVE_ROOT         = "/content/drive/MyDrive"
@@ -479,7 +487,7 @@ def build_service_code_map_with_logs(
                  svc, code_col, chosen_date, chosen_resp)
     return code_map, meta_map
 
-# ---------- Summary writer (PST) — now includes Sample ID
+# ---------- Summary writer (PST) — includes Sample ID
 
 def _now_pacific() -> Tuple[str, str]:
     try:
@@ -571,11 +579,11 @@ def build_setup_cells(setup_cell: str, pipinstall_cell: str):
 
 def build_import_and_port_cell_ws(
     api_modules: List[str],
-    expanded_services: List[str],
-    working_row: Dict[str, str],
+    services_for_code: List[str],         # explicit services from services_needed
     template_row: Dict[str, str],
     code_map_initial: Dict[str, str],
     meta_map_initial: Dict[str, Tuple[str, str]],
+    user_location_value: str,
 ):
     L: List[str] = []
     L.append("# Imports")
@@ -585,8 +593,8 @@ def build_import_and_port_cell_ws(
         L.append("from typing import Dict, Any")
         L.append("from datetime import timezone")
     L += ["import json, uuid", "from datetime import datetime", "import os", ""]
-    # USER_LOCATION injection
-    user_loc_val = (working_row.get("user_location") or "").replace("\\", "\\\\").replace('"', '\\"')
+    # USER_LOCATION injection (unchanged)
+    user_loc_val = (user_location_value or "").replace("\\", "\\\\").replace('"', '\\"')
     L.append('# User location from Working Sheet')
     L.append(f'os.environ["USER_LOCATION"] = "{user_loc_val}"')
     L.append("")
@@ -599,13 +607,14 @@ def build_import_and_port_cell_ws(
 
     calls: List[str] = []
 
-    for svc in expanded_services:
+    for svc in services_for_code:
         spec = PORTING_SPECS.get(svc)
         if not spec:
             L += [f"# (No porting spec defined for '{svc}'; skipping)", ""]
             continue
 
-        # Inject inputs — from TEMPLATE row
+        # Inject inputs — from TEMPLATE row (spec for the selected service
+        # already lists any dependency initial DBs it needs)
         for col, var, as_dict in spec.get("json_vars", []):
             try:
                 d = parse_initial_db(template_row.get(col))
@@ -616,7 +625,7 @@ def build_import_and_port_cell_ws(
             else:
                 L += [f"# {var} from Template Colab → {col} (JSON string)", f"{var} = json.dumps({py_literal(d)}, ensure_ascii=False)", ""]
 
-        # Paste live code with meta line (initial)
+        # Paste live code with meta line (initial) — ONLY for the explicit service
         code_str = code_map_initial.get(svc, "")
         if code_str:
             code_str = reescape_newlines_inside_string_literals(code_str).strip()
@@ -638,7 +647,7 @@ def build_import_and_port_cell_ws(
     return new_code_cell("\n".join(L) + "\n")
 
 def final_db_col_for_service(svc: str) -> str:
-    """Working Sheet FINAL DB column — now '<service>_final_db' (no 'ported_' prefix)."""
+    """Working Sheet FINAL DB column — '<service>_final_db' (no 'ported_' prefix)."""
     return f"{svc}_final_db"
 
 def build_initiate_final_dbs_cell_ws(
@@ -699,26 +708,37 @@ def build_initiate_final_dbs_cell_ws(
     return new_code_cell("\n".join(L) + "\n")
 
 def build_final_assertion_cell(working_row: Dict[str, str]) -> nbformat.NotebookNode:
-    code = (working_row.get("final_assertion_code") or "").strip()
-    code = reescape_newlines_inside_string_literals(code).strip()
-    return new_code_cell(code + ("\n" if code else ""))
+    """
+    Pick modified-final-assertion if present (non-blank) else the base final-assertion.
+    Column names are given by env vars MODIFIED_FINAL_ASSERTION_COL_NAME and FINAL_ASSERTION_COL_NAME.
+    """
+    mod_code = (working_row.get(MODIFIED_FINAL_ASSERTION_COL_NAME) or "").strip()
+    base_code = (working_row.get(FINAL_ASSERTION_COL_NAME) or "").strip()
+    chosen = mod_code if mod_code else base_code
+    chosen = reescape_newlines_inside_string_literals(chosen).strip()
+    return new_code_cell(chosen + ("\n" if chosen else ""))
 
 def build_empty_block(title: str):
     return [new_markdown_cell(f"# {title}"), new_code_cell("")]
 
 # ---------- Preflight & notebook generator
 
-def preflight_row(template_row: Dict[str, str]) -> Dict[str, Any]:
+def preflight_row_ws(template_row: Dict[str, str], explicit_services: List[str]) -> Dict[str, Any]:
+    """
+    Use explicit services (from 'services_needed' in Template Colab) for code execution,
+    but validate required inputs for those services + their dependencies.
+    """
     issues = {"unknown_services": [], "missing_inputs": [], "json_errors": {}}
-    services = services_from_initial_db_columns(template_row)
-    expanded = list(services)
-    for s in services:
+    # Expand explicit services with dependencies for validation/imports
+    expanded = list(explicit_services)
+    for s in explicit_services:
         spec = SERVICE_SPECS.get(s)
         if spec:
-            for req in spec["requires"]:
+            for req in spec.get("requires", []):
                 if req not in expanded:
                     expanded.append(req)
     issues["unknown_services"] = [s for s in expanded if s not in SERVICE_SPECS]
+
     need = sorted({c for s in expanded for c in REQUIRED_INPUTS.get(s, [])})
     for col in need:
         v = template_row.get(col, "")
@@ -729,7 +749,7 @@ def preflight_row(template_row: Dict[str, str]) -> Dict[str, Any]:
                 json.loads(str(v))
             except Exception as e:
                 issues["json_errors"][col] = str(e)
-    return {"services": services, "expanded": expanded, "issues": issues}
+    return {"expanded": expanded, "issues": issues}
 
 def generate_notebook_for_row_ws(
     working_row: Dict[str, str],
@@ -742,21 +762,26 @@ def generate_notebook_for_row_ws(
     code_map_final: Dict[str, str],
     meta_map_final: Dict[str, Tuple[str, str]],
 ) -> Tuple[nbformat.NotebookNode, Dict[str, Any], str]:
-    pre = preflight_row(template_row)
-    services = pre["services"]; expanded = pre["expanded"]; issues = pre["issues"]
+    # Determine explicit services from Template Colab 'services_needed'
+    services_needed = split_services(template_row.get("services_needed", ""))
+    # Fallback (very rare): derive from *_initial_db presence
+    if not services_needed:
+        services_needed = services_from_initial_db_columns(template_row)
 
+    pre = preflight_row_ws(template_row, services_needed)
+    expanded = pre["expanded"]; issues = pre["issues"]
+
+    # API modules list (explicit + dependencies)
     api_modules: List[str] = []
-    for s in services:
+    for s in expanded:
         spec = SERVICE_SPECS.get(s)
         if not spec: continue
         api = spec["api"]
         if api not in api_modules: api_modules.append(api)
-        for req in spec.get("requires", []):
-            ra = SERVICE_SPECS[req]["api"]
-            if ra not in api_modules: api_modules.append(ra)
 
     sample_id = (working_row.get("Sample ID") or working_row.get("sample_id") or working_row.get("SampleID") or "").strip() or f"row-{idx}"
     query_txt = (working_row.get("query") or "").strip()
+    user_loc = working_row.get("user_location", "")
 
     nb = new_notebook()
     nb.cells.append(build_metadata_cell(sample_id, query_txt, api_modules))
@@ -764,8 +789,18 @@ def generate_notebook_for_row_ws(
     if w: nb.cells.append(w)
     nb.cells.append(new_markdown_cell("# Set Up"))
     nb.cells.extend(build_setup_cells(setup_cell, pipinstall_cell))
+
     nb.cells.append(new_markdown_cell("## Import APIs and initiate DBs"))
-    nb.cells.append(build_import_and_port_cell_ws(api_modules, expanded, working_row, template_row, code_map_initial, meta_map_initial))
+    nb.cells.append(
+        build_import_and_port_cell_ws(
+            api_modules=api_modules,
+            services_for_code=services_needed,   # ONLY explicit services for code/calls
+            template_row=template_row,
+            code_map_initial=code_map_initial,
+            meta_map_initial=meta_map_initial,
+            user_location_value=user_loc,
+        )
+    )
 
     nb.cells.extend(build_empty_block("Initial Assertion"))
     nb.cells.extend(build_empty_block("Action"))
@@ -922,5 +957,5 @@ def main():
     elapsed = time.time() - start
     log.info("Parallel generation complete in %.1fs with %d problem row(s).", elapsed, problems_cnt)
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()

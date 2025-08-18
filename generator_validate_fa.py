@@ -652,7 +652,7 @@ def build_import_and_port_cell_ws(
 
 def final_db_col_for_service(svc: str) -> str:
     """Working Sheet FINAL DB column — now 'ported_<service>_final_db'."""
-    return f"ported_{svc}_final_db"
+    return f"{svc}_final_db"
 
 def build_action_final_dbs_cell_ws(
     final_services: List[str],

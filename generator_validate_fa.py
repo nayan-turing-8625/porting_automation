@@ -2,7 +2,7 @@
 # Working Sheet → Colab notebooks in Drive (parallel) + summary tab (PST timestamp)
 # Fixes:
 #  1) Final DB porting (function code + JSONs) moved into the Action block (removed "Initiate Final DBs").
-#  2) Final DB JSONs are read from ported_<service>_final_db.
+#  2) Final DB JSONs are read from <service>_final_db.
 #  3) USER_LOCATION is sanitized to a single line before injection.
 #
 # Existing behavior preserved:
@@ -651,7 +651,7 @@ def build_import_and_port_cell_ws(
     return new_code_cell("\n".join(L) + "\n")
 
 def final_db_col_for_service(svc: str) -> str:
-    """Working Sheet FINAL DB column — now 'ported_<service>_final_db'."""
+    """Working Sheet FINAL DB column — now '<service>_final_db'."""
     return f"{svc}_final_db"
 
 def build_action_final_dbs_cell_ws(

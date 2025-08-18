@@ -9,6 +9,8 @@
 #  • Initial Assertion cell now contains a fully-commented summary of:
 #      - Initial-DB services used + their input columns
 #      - Final-DB services requested + whether JSON present + whether final code present
+#  • WhatsApp final: if Working Sheet has contacts_final_db, use it;
+#    otherwise fall back to Template Colab contacts_initial_db.
 #
 # Existing behavior preserved:
 #  • Initial code pasted/called ONLY for explicit services in Template Colab 'services_needed'
@@ -603,7 +605,7 @@ def build_import_and_port_cell_ws(
     L += ["import json, uuid", "from datetime import datetime", "import os", ""]
     # USER_LOCATION injection (force single line, escape)
     raw_loc = str(user_location_value or "")
-    single_line = " ".join(raw_loc.split())  # collapses all whitespace/newlines to single spaces
+    single_line = " ".join(raw_loc.split())
     user_loc_val = single_line.replace("\\", "\\\\").replace('"', '\\"')
     L.append('# User location from Working Sheet')
     L.append(f'os.environ["USER_LOCATION"] = "{user_loc_val}"')
@@ -664,16 +666,17 @@ def build_action_final_dbs_cell_ws(
     working_row: Dict[str, str],
     code_map_final: Dict[str, str],
     meta_map_final: Dict[str, Tuple[str, str]],
+    template_row: Dict[str, str],
 ):
     """
     Builds the Action block code cell that applies FINAL DB changes.
     Uses SAME porting calls as initial stage.
+    WhatsApp-specific: if Working Sheet has contacts_final_db, use it; else fall back to contacts_initial_db.
     """
     L: List[str] = []
     calls: List[str] = []
 
     if not final_services:
-        # Keep Action block present but harmless
         L += ["# No final state changes requested for this task.", ""]
         return new_code_cell("\n".join(L) + "\n")
 
@@ -689,6 +692,7 @@ def build_action_final_dbs_cell_ws(
             L += [f"# (Could not determine primary variable for service '{svc}'; skipping)", ""]
             continue
 
+        # --- Inject FINAL JSON for the service from Working Sheet ---
         col = final_db_col_for_service(svc)   # <service>_final_db from Working Sheet
         d = parse_json_best_effort(working_row.get(col))
         if is_dict:
@@ -698,6 +702,31 @@ def build_action_final_dbs_cell_ws(
             L += [f"# {var_name} from Working Sheet → {col} (JSON string)",
                   f"{var_name} = json.dumps({py_literal(d)}, ensure_ascii=False)", ""]
 
+        # --- WhatsApp-specific handling for contacts_src_json ---
+        if svc == "whatsapp":
+            contacts_final_col = final_db_col_for_service("contacts")  # 'contacts_final_db'
+            contacts_final_raw = (working_row.get(contacts_final_col) or "").strip()
+            if contacts_final_raw:
+                # Use Working Sheet contacts_final_db
+                contacts_final_parsed = parse_json_best_effort(contacts_final_raw)
+                L += [
+                    "# Use contacts from Working Sheet final DB for WhatsApp final stage",
+                    f"contacts_src_json = json.dumps({py_literal(contacts_final_parsed)}, ensure_ascii=False)",
+                    "",
+                ]
+            else:
+                # Fall back to Template Colab contacts_initial_db
+                try:
+                    contacts_dict = parse_initial_db(template_row.get("contacts_initial_db"))
+                except Exception:
+                    contacts_dict = {}
+                L += [
+                    "# Ensure contacts_src_json for WhatsApp final stage (fallback from Template Colab contacts_initial_db)",
+                    f"contacts_src_json = json.dumps({py_literal(contacts_dict)}, ensure_ascii=False)",
+                    "",
+                ]
+
+        # --- Append FINAL-DB porting function code (if any) ---
         code_str = code_map_final.get(svc, "")
         if code_str:
             code_str = reescape_newlines_inside_string_literals(code_str).strip()
@@ -727,12 +756,6 @@ def build_initial_assertion_comment_cell(
     working_row: Dict[str, str],
     code_map_final: Dict[str, str],
 ) -> nbformat.NotebookNode:
-    """
-    Creates a *comment-only* code cell summarizing:
-      - Initial-DB services + columns used
-      - Final-DB services requested + JSON presence + final code presence
-    All lines are commented to guarantee no execution/errors.
-    """
     lines: List[str] = []
     lines.append("# === Notebook summary (commented; no execution) ===")
     lines.append("# INITIAL DB → services and columns used:")
@@ -753,7 +776,15 @@ def build_initial_assertion_comment_cell(
             col = final_db_col_for_service(svc)
             has_json = bool(str(working_row.get(col, "")).strip())
             has_code = bool(code_map_final.get(svc, "").strip())
-            lines.append(f"#   - {svc}: final_db_col='{col}', json_present={has_json}, final_code_present={has_code}")
+            extra = ""
+            if svc == "whatsapp":
+                contacts_final_col = final_db_col_for_service("contacts")
+                has_contacts_final = bool(str(working_row.get(contacts_final_col, "")).strip())
+                if has_contacts_final:
+                    extra = "  (WhatsApp will use Working Sheet 'contacts_final_db')"
+                else:
+                    extra = "  (WhatsApp falls back to Template Colab 'contacts_initial_db')"
+            lines.append(f"#   - {svc}: final_db_col='{col}', json_present={has_json}, final_code_present={has_code}{extra}")
     else:
         lines.append("#   - (none)")
 
@@ -766,10 +797,6 @@ def build_initial_assertion_comment_cell(
     return new_code_cell("\n".join(lines) + "\n")
 
 def build_final_assertion_cell(working_row: Dict[str, str]) -> nbformat.NotebookNode:
-    """
-    Pick modified-final-assertion if present (non-blank) else the base final-assertion.
-    Column names are given by env vars MODIFIED_FINAL_ASSERTION_COL_NAME and FINAL_ASSERTION_COL_NAME.
-    """
     mod_code = (working_row.get(MODIFIED_FINAL_ASSERTION_COL_NAME) or "").strip()
     base_code = (working_row.get(FINAL_ASSERTION_COL_NAME) or "").strip()
     chosen = mod_code if mod_code else base_code
@@ -782,12 +809,7 @@ def build_empty_block(title: str):
 # ---------- Preflight & notebook generator
 
 def preflight_row_ws(template_row: Dict[str, str], explicit_services: List[str]) -> Dict[str, Any]:
-    """
-    Use explicit services (from 'services_needed' in Template Colab) for code execution,
-    but validate required inputs for those services + their dependencies.
-    """
     issues = {"unknown_services": [], "missing_inputs": [], "json_errors": {}}
-    # Expand explicit services with dependencies for validation/imports
     expanded = list(explicit_services)
     for s in explicit_services:
         spec = SERVICE_SPECS.get(s)
@@ -796,7 +818,6 @@ def preflight_row_ws(template_row: Dict[str, str], explicit_services: List[str])
                 if req not in expanded:
                     expanded.append(req)
     issues["unknown_services"] = [s for s in expanded if s not in SERVICE_SPECS]
-
     need = sorted({c for s in expanded for c in REQUIRED_INPUTS.get(s, [])})
     for col in need:
         v = template_row.get(col, "")
@@ -820,7 +841,6 @@ def generate_notebook_for_row_ws(
     code_map_final: Dict[str, str],
     meta_map_final: Dict[str, Tuple[str, str]],
 ) -> Tuple[nbformat.NotebookNode, Dict[str, Any], str]:
-    # Determine explicit services from Template Colab 'services_needed'
     services_needed = split_services(template_row.get("services_needed", ""))
     if not services_needed:
         services_needed = services_from_initial_db_columns(template_row)
@@ -828,7 +848,6 @@ def generate_notebook_for_row_ws(
     pre = preflight_row_ws(template_row, services_needed)
     expanded = pre["expanded"]; issues = pre["issues"]
 
-    # API modules list (explicit + dependencies)
     api_modules: List[str] = []
     for s in expanded:
         spec = SERVICE_SPECS.get(s)
@@ -840,7 +859,6 @@ def generate_notebook_for_row_ws(
     query_txt = (working_row.get("query") or "").strip()
     user_loc = working_row.get("user_location", "")
 
-    # For the comment cell later
     final_services = split_services(working_row.get("final_state_changes_needed", ""))
 
     nb = new_notebook()
@@ -854,7 +872,7 @@ def generate_notebook_for_row_ws(
     nb.cells.append(
         build_import_and_port_cell_ws(
             api_modules=api_modules,
-            services_for_code=services_needed,   # ONLY explicit services for code/calls
+            services_for_code=services_needed,
             template_row=template_row,
             code_map_initial=code_map_initial,
             meta_map_initial=meta_map_initial,
@@ -862,7 +880,6 @@ def generate_notebook_for_row_ws(
         )
     )
 
-    # Initial Assertion — now a commented summary (no execution)
     nb.cells.append(new_markdown_cell("# Initial Assertion"))
     nb.cells.append(
         build_initial_assertion_comment_cell(
@@ -874,9 +891,16 @@ def generate_notebook_for_row_ws(
         )
     )
 
-    # Action block now contains FINAL DB porting
     nb.cells.append(new_markdown_cell("# Action"))
-    nb.cells.append(build_action_final_dbs_cell_ws(final_services, working_row, code_map_final, meta_map_final))
+    nb.cells.append(
+        build_action_final_dbs_cell_ws(
+            final_services=final_services,
+            working_row=working_row,
+            code_map_final=code_map_final,
+            meta_map_final=meta_map_final,
+            template_row=template_row,
+        )
+    )
 
     nb.cells.append(new_markdown_cell("# Final Assertion"))
     nb.cells.append(build_final_assertion_cell(working_row))
@@ -899,7 +923,6 @@ def build_and_upload_worker(
     meta_map_final: Dict[str, Tuple[str, str]],
     out_folder_id: str,
 ):
-    """Return (idx, sample_id, task_id, services_required_for_summary, colab_url, issues_or_None, error_or_None)."""
     task_id = (working_row.get("task_id") or f"row-{idx}").strip() or f"row-{idx}"
 
     try:
@@ -908,7 +931,6 @@ def build_and_upload_worker(
             code_map_initial, meta_map_initial, code_map_final, meta_map_final
         )
 
-        # Filename: ONLY Sample ID
         safe_name = re.sub(r"[\\/:*?\"<>|]+", "_", sample_id).strip() or f"row-{idx}"
         fname = f"{safe_name}.ipynb"
 
@@ -971,9 +993,8 @@ def main():
     )
     log.info("Prepared FINAL-DB porting code for %d services.", len(code_map_final))
 
-    # Parallel build+upload
     start = time.time()
-    rows_for_summary: List[Tuple[int, str, str, str, str]] = []  # (idx, sample_id, task_id, services, url)
+    rows_for_summary: List[Tuple[int, str, str, str, str]] = []
     problems_cnt = 0
 
     work_items = []
@@ -1012,15 +1033,13 @@ def main():
                 log.info("✔ Uploaded %s (%s) → %s", sample_id, task_id, colab_url)
             else:
                 problems_cnt += 1
-                rows_for_summary.append((idx, sample_id, task_id, services_required, ""))  # keep row; empty URL on failure
+                rows_for_summary.append((idx, sample_id, task_id, services_required, ""))
                 log.error("✖ Failed %s / %s (kept in summary with empty URL).", sample_id, task_id)
 
-    # Reorder rows back to original order
     rows_for_summary.sort(key=lambda x: x[0])
     rows_final = [[sample_id, task_id, services, url] for _, sample_id, task_id, services, url in rows_for_summary]
 
-    # Write summary (includes PST refresh columns)
-    sheets = build("sheets", "v4")  # fresh single-thread client
+    sheets = build("sheets", "v4")
     upsert_summary_sheet_ws(sheets, SPREADSHEET_ID, SUMMARY_SHEET_NAME_WORKING_AUTOMATION, rows_final)
 
     elapsed = time.time() - start

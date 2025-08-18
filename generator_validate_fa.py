@@ -964,5 +964,5 @@ def main():
     elapsed = time.time() - start
     log.info("Parallel generation complete in %.1fs with %d problem row(s).", elapsed, problems_cnt)
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()

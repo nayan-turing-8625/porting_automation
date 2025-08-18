@@ -1,9 +1,14 @@
 # generator_working_sample_parallel.py
 # Working Sheet → Colab notebooks in Drive (parallel) + summary tab (PST timestamp)
-# Fixes:
-#  1) Final DB porting (function code + JSONs) moved into the Action block (removed "Initiate Final DBs").
-#  2) Final DB JSONs are read from <service>_final_db.
+# Fixes preserved:
+#  1) Final DB porting (function code + JSONs) runs inside the Action block (no "Initiate Final DBs" cell).
+#  2) Final DB JSONs are read from <service>_final_db (Working Sheet).
 #  3) USER_LOCATION is sanitized to a single line before injection.
+#
+# New (per request):
+#  • Initial Assertion cell now contains a fully-commented summary of:
+#      - Initial-DB services used + their input columns
+#      - Final-DB services requested + whether JSON present + whether final code present
 #
 # Existing behavior preserved:
 #  • Initial code pasted/called ONLY for explicit services in Template Colab 'services_needed'
@@ -651,7 +656,7 @@ def build_import_and_port_cell_ws(
     return new_code_cell("\n".join(L) + "\n")
 
 def final_db_col_for_service(svc: str) -> str:
-    """Working Sheet FINAL DB column — now '<service>_final_db'."""
+    """Working Sheet FINAL DB column — '<service>_final_db'."""
     return f"{svc}_final_db"
 
 def build_action_final_dbs_cell_ws(
@@ -684,7 +689,7 @@ def build_action_final_dbs_cell_ws(
             L += [f"# (Could not determine primary variable for service '{svc}'; skipping)", ""]
             continue
 
-        col = final_db_col_for_service(svc)   # ported_<service>_final_db from Working Sheet
+        col = final_db_col_for_service(svc)   # <service>_final_db from Working Sheet
         d = parse_json_best_effort(working_row.get(col))
         if is_dict:
             L += [f"# {var_name} from Working Sheet → {col} (dict)",
@@ -714,6 +719,51 @@ def build_action_final_dbs_cell_ws(
     if calls:
         L += ["# Execute final porting"] + calls
     return new_code_cell("\n".join(L) + "\n")
+
+def build_initial_assertion_comment_cell(
+    services_for_code: List[str],
+    final_services: List[str],
+    template_row: Dict[str, str],
+    working_row: Dict[str, str],
+    code_map_final: Dict[str, str],
+) -> nbformat.NotebookNode:
+    """
+    Creates a *comment-only* code cell summarizing:
+      - Initial-DB services + columns used
+      - Final-DB services requested + JSON presence + final code presence
+    All lines are commented to guarantee no execution/errors.
+    """
+    lines: List[str] = []
+    lines.append("# === Notebook summary (commented; no execution) ===")
+    lines.append("# INITIAL DB → services and columns used:")
+    if services_for_code:
+        for svc in services_for_code:
+            spec = PORTING_SPECS.get(svc, {})
+            cols = [c for (c, _var, _d) in spec.get("json_vars", [])]
+            present = [c for c in cols if str(template_row.get(c, "")).strip()]
+            lines.append(f"#   - {svc}: columns={cols or '[]'} present={present or '[]'}")
+    else:
+        lines.append("#   - (none)")
+
+    lines.append("#")
+    lines.append("# FINAL DB → requested services and availability:")
+    if final_services:
+        for raw in final_services:
+            svc = normalize_service_token(raw)
+            col = final_db_col_for_service(svc)
+            has_json = bool(str(working_row.get(col, "")).strip())
+            has_code = bool(code_map_final.get(svc, "").strip())
+            lines.append(f"#   - {svc}: final_db_col='{col}', json_present={has_json}, final_code_present={has_code}")
+    else:
+        lines.append("#   - (none)")
+
+    lines.append("#")
+    lines.append("# SERVICE CHANGES SUMMARY (requested vs expected):")
+    lines.append("#   - requested: value(s) in Working Sheet column 'final_state_changes_needed'")
+    lines.append("#   - applied: executed during this notebook's 'Action' block using the same porting calls.")
+    lines.append("#   - NOTE: This is an informational comment; verify actual results below in Final Assertion.")
+
+    return new_code_cell("\n".join(lines) + "\n")
 
 def build_final_assertion_cell(working_row: Dict[str, str]) -> nbformat.NotebookNode:
     """
@@ -790,6 +840,9 @@ def generate_notebook_for_row_ws(
     query_txt = (working_row.get("query") or "").strip()
     user_loc = working_row.get("user_location", "")
 
+    # For the comment cell later
+    final_services = split_services(working_row.get("final_state_changes_needed", ""))
+
     nb = new_notebook()
     nb.cells.append(build_metadata_cell(sample_id, query_txt, api_modules))
     w = build_warnings_cell(issues)
@@ -809,11 +862,20 @@ def generate_notebook_for_row_ws(
         )
     )
 
-    nb.cells.extend(build_empty_block("Initial Assertion"))
+    # Initial Assertion — now a commented summary (no execution)
+    nb.cells.append(new_markdown_cell("# Initial Assertion"))
+    nb.cells.append(
+        build_initial_assertion_comment_cell(
+            services_for_code=services_needed,
+            final_services=final_services,
+            template_row=template_row,
+            working_row=working_row,
+            code_map_final=code_map_final,
+        )
+    )
 
     # Action block now contains FINAL DB porting
     nb.cells.append(new_markdown_cell("# Action"))
-    final_services = split_services(working_row.get("final_state_changes_needed", ""))
     nb.cells.append(build_action_final_dbs_cell_ws(final_services, working_row, code_map_final, meta_map_final))
 
     nb.cells.append(new_markdown_cell("# Final Assertion"))

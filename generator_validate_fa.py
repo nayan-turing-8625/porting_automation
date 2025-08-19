@@ -16,7 +16,7 @@
 #  • Parallel generation, Drive/Sheets I/O, summary (PST) unchanged.
 
 from __future__ import annotations
-
+from dateutil import parser
 import os, sys, re, json, ast, time, pprint, logging, traceback
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timezone
@@ -593,9 +593,12 @@ def build_import_and_port_cell_ws(
     code_map_initial: Dict[str, str],
     meta_map_initial: Dict[str, Tuple[str, str]],
     user_location_value: str,
+    query_date:str
 ):
     L: List[str] = []
     L.append("# Imports")
+    # Add Freezegun as first import
+    L = add_freezegun_block(L,query_date)
     for m in api_modules: L.append(f"import {m}")
     if "notes_and_lists" in api_modules:
         L.append("from notes_and_lists.SimulationEngine.utils import update_title_index, update_content_index")
@@ -864,6 +867,7 @@ def generate_notebook_for_row_ws(
     sample_id = (working_row.get("Sample ID") or working_row.get("sample_id") or working_row.get("SampleID") or "").strip() or f"row-{idx}"
     query_txt = (working_row.get("query") or "").strip()
     user_loc = working_row.get("user_location", "")
+    query_date = (working_row.get("query_date") or "").strip()
 
     final_services = split_services(working_row.get("final_state_changes_needed", ""))
 
@@ -883,6 +887,7 @@ def generate_notebook_for_row_ws(
             code_map_initial=code_map_initial,
             meta_map_initial=meta_map_initial,
             user_location_value=user_loc,
+            query_date=query_date
         )
     )
 
@@ -908,6 +913,50 @@ def generate_notebook_for_row_ws(
     nb.metadata["colab"] = {"provenance": []}
     nb.metadata["language_info"] = {"name": "python"}
     return nb, issues, sample_id
+
+def add_freezegun_block(L,query_date):
+    """
+    Adds the freezegun code snippet block
+    """
+    # add freeze gun if we have query_date 
+    if not query_date:
+        return L
+
+    # verify the query_date is in valid format 
+    try:
+        parser.parse(query_date)
+    except Exception as e:
+        print(f"Failed to parse query date : {query_date} | skipping freezegun ..")
+        return L
+    
+    # Add Freezegun as first import
+    L.append("### Freezegun Block Start")
+    L.append("import freezegun")
+    L.append("from freezegun import freeze_time")
+    L.append("from datetime import datetime")
+    L.append("")  # Empty line for readability
+    
+    # Add the start_frozen_time function definition
+    L.extend([
+        "def start_frozen_time(current_date):",
+        '    """',
+        '    Starts a frozen time context using freezegun.',
+        '    """',
+        '    ignore_pkgs = {"ipykernel", "ipyparallel", "ipython", "jupyter-server"}',
+        '    freezegun.configure(extend_ignore_list=list(ignore_pkgs))',
+        '    freezer = freeze_time(current_date)',
+        '    freezer.start()',
+        '    print("--> FROZEN TIME:", datetime.now())',
+        '    return freezer',
+        ""  # Empty line after function
+    ])
+    L.append(f'current_time = "{query_date}"')
+    L.append("start_frozen_time(current_time)")
+    L.append("### Freezegun Block End")
+    L.append("")  # Empty line for readability
+
+    return L
+
 
 # ---------- Parallel worker
 def build_and_upload_worker(

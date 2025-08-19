@@ -12,7 +12,7 @@ import os, sys, re, json, ast, time, pprint, logging, traceback
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
+from dateutil import parser
 import nbformat
 from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
 
@@ -569,6 +569,50 @@ def build_setup_cells(setup_cell: str, pipinstall_cell: str):
         new_code_cell(pip_src),
     ]
 
+def add_freezegun_block(L,query_date):
+    """
+    Adds the freezegun code snippet block
+    """
+    # add freeze gun if we have query_date 
+    if not query_date:
+        return L
+
+    # verify the query_date is in valid format 
+    try:
+        parser.parse(query_date)
+    except Exception as e:
+        print(f"Failed to parse query date : {query_date} | skipping freezegun ..")
+        return L
+    
+    # Add Freezegun as first import
+    L.append("### Freezegun Block Start")
+    L.append("import freezegun")
+    L.append("from freezegun import freeze_time")
+    L.append("from datetime import datetime")
+    L.append("")  # Empty line for readability
+    
+    # Add the start_frozen_time function definition
+    L.extend([
+        "def start_frozen_time(current_date):",
+        '    """',
+        '    Starts a frozen time context using freezegun.',
+        '    """',
+        '    ignore_pkgs = {"ipykernel", "ipyparallel", "ipython", "jupyter-server"}',
+        '    freezegun.configure(extend_ignore_list=list(ignore_pkgs))',
+        '    freezer = freeze_time(current_date)',
+        '    freezer.start()',
+        '    print("--> FROZEN TIME:", datetime.now())',
+        '    return freezer',
+        ""  # Empty line after function
+    ])
+    L.append("")  # Empty line for readability
+    L.append(f'current_time = "{query_date}"')
+    L.append("start_frozen_time(current_time)")
+    L.append("### Freezegun Block End")
+    L.append("")  # Empty line for readability
+
+    return L
+
 def build_import_and_port_cell_ws(
     api_modules: List[str],
     expanded_services: List[str],
@@ -576,9 +620,14 @@ def build_import_and_port_cell_ws(
     template_row: Dict[str, str],
     code_map_initial: Dict[str, str],
     meta_map_initial: Dict[str, Tuple[str, str]],
+    query_date:str|None=None
 ):
     L: List[str] = []
     L.append("# Imports")
+
+    # Add Freezegun as first import
+    L = add_freezegun_block(L,query_date)
+    # freeze the time 
     for m in api_modules: L.append(f"import {m}")
     if "notes_and_lists" in api_modules:
         L.append("from notes_and_lists.SimulationEngine.utils import update_title_index, update_content_index")
@@ -757,6 +806,7 @@ def generate_notebook_for_row_ws(
 
     sample_id = (working_row.get("Sample ID") or working_row.get("sample_id") or working_row.get("SampleID") or "").strip() or f"row-{idx}"
     query_txt = (working_row.get("query") or "").strip()
+    query_date = (working_row.get("query_date") or "").strip()
 
     nb = new_notebook()
     nb.cells.append(build_metadata_cell(sample_id, query_txt, api_modules))
@@ -765,7 +815,7 @@ def generate_notebook_for_row_ws(
     nb.cells.append(new_markdown_cell("# Set Up"))
     nb.cells.extend(build_setup_cells(setup_cell, pipinstall_cell))
     nb.cells.append(new_markdown_cell("## Import APIs and initiate DBs"))
-    nb.cells.append(build_import_and_port_cell_ws(api_modules, expanded, working_row, template_row, code_map_initial, meta_map_initial))
+    nb.cells.append(build_import_and_port_cell_ws(api_modules, expanded, working_row, template_row, code_map_initial, meta_map_initial,query_date))
 
     nb.cells.extend(build_empty_block("Initial Assertion"))
     nb.cells.extend(build_empty_block("Action"))

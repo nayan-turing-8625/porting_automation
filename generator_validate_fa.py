@@ -1,24 +1,20 @@
 # generator_working_sample_parallel.py
 # Working Sheet → Colab notebooks in Drive (parallel) + summary tab (PST timestamp)
-# Fixes preserved:
-#  1) Final DB porting (function code + JSONs) runs inside the Action block (no "Initiate Final DBs" cell).
-#  2) Final DB JSONs are read from <service>_final_db (Working Sheet).
-#  3) USER_LOCATION is sanitized to a single line before injection.
 #
-# New (per request):
-#  • Initial Assertion cell now contains a fully-commented summary of:
-#      - Initial-DB services used + their input columns
-#      - Final-DB services requested + whether JSON present + whether final code present
-#  • WhatsApp final: if Working Sheet has contacts_final_db, use it;
-#    otherwise fall back to Template Colab contacts_initial_db.
+# NEW (per request):
+#  • Initial DB selection is DATA-DRIVEN:
+#      - We scan ALL <service>_initial_db columns in Template Colab.
+#      - For every non-empty column, we paste that service’s function_to_translate_json code and run it.
+#      - Special rule: if WhatsApp is included, we DO NOT also paste the standalone Contacts porting code
+#        (we still inject contacts_initial_db as input to WhatsApp, as before).
 #
-# Existing behavior preserved:
-#  • Initial code pasted/called ONLY for explicit services in Template Colab 'services_needed'
-#    (dependencies still injected via json_vars for that service).
-#  • Final DB stage uses the SAME porting call signatures as the initial stage.
-#  • Final Assertion code chosen dynamically from env-provided column names
-#    (MODIFIED_FINAL_ASSERTION_COL_NAME preferred over FINAL_ASSERTION_COL_NAME).
-#  • Parallel generation, Drive/Sheets I/O, logging, summary (PST) unchanged.
+# PRESERVED BEHAVIOR:
+#  • Action block applies FINAL DB changes using the SAME porting calls as initial stage.
+#  • WhatsApp FINAL stage uses contacts_final_db when present; else falls back to contacts_initial_db.
+#  • USER_LOCATION is sanitized to one line before injection.
+#  • Final Assertion chooses MODIFIED_FINAL_ASSERTION_COL_NAME first, then FINAL_ASSERTION_COL_NAME.
+#  • Initial Assertion is a commented summary (no execution).
+#  • Parallel generation, Drive/Sheets I/O, summary (PST) unchanged.
 
 from __future__ import annotations
 
@@ -179,6 +175,19 @@ SELF_VAR_BY_SERVICE: Dict[str, Tuple[str, bool]] = {
     "clock":           ("clock_src_json",    False),
     "reminders":       ("reminders_src_json",False),
     "notes":           ("notes_src_json",    False),
+}
+
+# Map each service to its own "primary" initial DB column for selection
+PRIMARY_INITIAL_DB_COL: Dict[str, str] = {
+    "contacts":        "contacts_initial_db",
+    "calendar":        "calendar_initial_db",
+    "gmail":           "gmail_initial_db",
+    "whatsapp":        "whatsapp_initial_db",
+    "device_settings": "device_settings_initial_db",
+    "media_control":   "media_control_initial_db",
+    "clock":           "clock_initial_db",
+    "reminders":       "reminders_initial_db",
+    "notes":           "notes_initial_db",
 }
 
 # =========================
@@ -395,27 +404,20 @@ def read_sheet_as_dicts(sheets, spreadsheet_id: str, sheet_name: str) -> Tuple[L
         rows.append(row_dict)
     return headers, rows
 
-# ---------- Selection by *_initial_db from Template Colab
+# ---------- Selection by *_initial_db from Template Colab (DATA-DRIVEN)
 
-REQUIRED_INPUTS: Dict[str, List[str]] = {
-    "whatsapp":        ["whatsapp_initial_db", "contacts_initial_db"],
-    "contacts":        ["contacts_initial_db"],
-    "calendar":        ["calendar_initial_db"],
-    "gmail":           ["gmail_initial_db"],
-    "device_settings": ["device_settings_initial_db"],
-    "media_control":   ["media_control_initial_db"],
-    "clock":           ["clock_initial_db"],
-    "reminders":       ["reminders_initial_db"],
-    "notes":           ["notes_initial_db"],
-}
-
-def services_from_initial_db_columns(row: Dict[str, str]) -> List[str]:
+def compute_initial_services_from_template_row(template_row: Dict[str, str]) -> List[str]:
+    """
+    Return services to execute in initial stage by scanning ALL <service>_initial_db columns.
+    Special rule: if whatsapp is present, do NOT include contacts as a standalone service.
+    """
     selected: List[str] = []
-    for svc, cols in REQUIRED_INPUTS.items():
-        if not cols: continue
-        primary = cols[0]
-        if str(row.get(primary, "")).strip():
+    for svc, col in PRIMARY_INITIAL_DB_COL.items():
+        if str(template_row.get(col, "")).strip():
             selected.append(svc)
+    # if whatsapp is selected, drop standalone contacts (we still pass contacts JSON to whatsapp)
+    if "whatsapp" in selected and "contacts" in selected:
+        selected.remove("contacts")
     return selected
 
 # ---------- Code sheet readers
@@ -589,7 +591,7 @@ def build_setup_cells(setup_cell: str, pipinstall_cell: str):
 
 def build_import_and_port_cell_ws(
     api_modules: List[str],
-    services_for_code: List[str],         # explicit services from services_needed
+    services_for_code: List[str],         # data-driven list from initial DB columns
     template_row: Dict[str, str],
     code_map_initial: Dict[str, str],
     meta_map_initial: Dict[str, Tuple[str, str]],
@@ -605,7 +607,7 @@ def build_import_and_port_cell_ws(
     L += ["import json, uuid", "from datetime import datetime", "import os", ""]
     # USER_LOCATION injection (force single line, escape)
     raw_loc = str(user_location_value or "")
-    single_line = " ".join(raw_loc.split())
+    single_line = " ".join(raw_loc.split())  # collapses all whitespace/newlines
     user_loc_val = single_line.replace("\\", "\\\\").replace('"', '\\"')
     L.append('# User location from Working Sheet')
     L.append(f'os.environ["USER_LOCATION"] = "{user_loc_val}"')
@@ -625,7 +627,7 @@ def build_import_and_port_cell_ws(
             L += [f"# (No porting spec defined for '{svc}'; skipping)", ""]
             continue
 
-        # Inject inputs — from TEMPLATE row
+        # Inject inputs — from TEMPLATE row (initial DBs)
         for col, var, as_dict in spec.get("json_vars", []):
             try:
                 d = parse_initial_db(template_row.get(col))
@@ -636,7 +638,7 @@ def build_import_and_port_cell_ws(
             else:
                 L += [f"# {var} from Template Colab → {col} (JSON string)", f"{var} = json.dumps({py_literal(d)}, ensure_ascii=False)", ""]
 
-        # Paste live code with meta line (initial) — ONLY for explicit service
+        # Paste live code with meta line (initial) — for each selected service
         code_str = code_map_initial.get(svc, "")
         if code_str:
             code_str = reescape_newlines_inside_string_literals(code_str).strip()
@@ -717,7 +719,7 @@ def build_action_final_dbs_cell_ws(
             else:
                 # Fall back to Template Colab contacts_initial_db
                 try:
-                    contacts_dict = parse_initial_db(template_row.get("contacts_initial_db"))
+                    contacts_dict = parse_initial_db(template_row.get('contacts_initial_db'))
                 except Exception:
                     contacts_dict = {}
                 L += [
@@ -758,7 +760,7 @@ def build_initial_assertion_comment_cell(
 ) -> nbformat.NotebookNode:
     lines: List[str] = []
     lines.append("# === Notebook summary (commented; no execution) ===")
-    lines.append("# INITIAL DB → services and columns used:")
+    lines.append("# INITIAL DB → services (detected from *_initial_db columns) and input columns used:")
     if services_for_code:
         for svc in services_for_code:
             spec = PORTING_SPECS.get(svc, {})
@@ -808,18 +810,24 @@ def build_empty_block(title: str):
 
 # ---------- Preflight & notebook generator
 
-def preflight_row_ws(template_row: Dict[str, str], explicit_services: List[str]) -> Dict[str, Any]:
+def preflight_row_ws(template_row: Dict[str, str], selected_services: List[str]) -> Dict[str, Any]:
+    """
+    Validate inputs for the SELECTED initial services + their dependencies.
+    """
     issues = {"unknown_services": [], "missing_inputs": [], "json_errors": {}}
-    expanded = list(explicit_services)
-    for s in explicit_services:
+    expanded = list(selected_services)
+    for s in selected_services:
         spec = SERVICE_SPECS.get(s)
         if spec:
             for req in spec.get("requires", []):
                 if req not in expanded:
                     expanded.append(req)
     issues["unknown_services"] = [s for s in expanded if s not in SERVICE_SPECS]
-    need = sorted({c for s in expanded for c in REQUIRED_INPUTS.get(s, [])})
-    for col in need:
+
+    need = sorted({c for s in expanded for c in PORTING_SPECS.get(s, {}).get("json_vars", [])})
+    # need is list of tuples -> keep first item (column name)
+    colnames = [c[0] for c in need]
+    for col in colnames:
         v = template_row.get(col, "")
         if not str(v).strip():
             issues["missing_inputs"].append(col)
@@ -841,13 +849,13 @@ def generate_notebook_for_row_ws(
     code_map_final: Dict[str, str],
     meta_map_final: Dict[str, Tuple[str, str]],
 ) -> Tuple[nbformat.NotebookNode, Dict[str, Any], str]:
-    services_needed = split_services(template_row.get("services_needed", ""))
-    if not services_needed:
-        services_needed = services_from_initial_db_columns(template_row)
+    # DATA-DRIVEN initial services (ignore services_needed completely)
+    services_for_code = compute_initial_services_from_template_row(template_row)
 
-    pre = preflight_row_ws(template_row, services_needed)
+    pre = preflight_row_ws(template_row, services_for_code)
     expanded = pre["expanded"]; issues = pre["issues"]
 
+    # API modules list (selected + dependencies)
     api_modules: List[str] = []
     for s in expanded:
         spec = SERVICE_SPECS.get(s)
@@ -859,6 +867,7 @@ def generate_notebook_for_row_ws(
     query_txt = (working_row.get("query") or "").strip()
     user_loc = working_row.get("user_location", "")
 
+    # For the comment cell later
     final_services = split_services(working_row.get("final_state_changes_needed", ""))
 
     nb = new_notebook()
@@ -872,7 +881,7 @@ def generate_notebook_for_row_ws(
     nb.cells.append(
         build_import_and_port_cell_ws(
             api_modules=api_modules,
-            services_for_code=services_needed,
+            services_for_code=services_for_code,   # DATA-DRIVEN
             template_row=template_row,
             code_map_initial=code_map_initial,
             meta_map_initial=meta_map_initial,
@@ -880,10 +889,11 @@ def generate_notebook_for_row_ws(
         )
     )
 
+    # Initial Assertion — commented summary (no execution)
     nb.cells.append(new_markdown_cell("# Initial Assertion"))
     nb.cells.append(
         build_initial_assertion_comment_cell(
-            services_for_code=services_needed,
+            services_for_code=services_for_code,
             final_services=final_services,
             template_row=template_row,
             working_row=working_row,
@@ -891,16 +901,9 @@ def generate_notebook_for_row_ws(
         )
     )
 
+    # Action block: FINAL DB porting
     nb.cells.append(new_markdown_cell("# Action"))
-    nb.cells.append(
-        build_action_final_dbs_cell_ws(
-            final_services=final_services,
-            working_row=working_row,
-            code_map_final=code_map_final,
-            meta_map_final=meta_map_final,
-            template_row=template_row,
-        )
-    )
+    nb.cells.append(build_action_final_dbs_cell_ws(final_services, working_row, code_map_final, meta_map_final, template_row))
 
     nb.cells.append(new_markdown_cell("# Final Assertion"))
     nb.cells.append(build_final_assertion_cell(working_row))
@@ -1033,7 +1036,7 @@ def main():
                 log.info("✔ Uploaded %s (%s) → %s", sample_id, task_id, colab_url)
             else:
                 problems_cnt += 1
-                rows_for_summary.append((idx, sample_id, task_id, services_required, ""))
+                rows_for_summary.append((idx, sample_id, task_id, services_required, ""))  # keep row; empty URL on failure
                 log.error("✖ Failed %s / %s (kept in summary with empty URL).", sample_id, task_id)
 
     rows_for_summary.sort(key=lambda x: x[0])

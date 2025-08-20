@@ -555,7 +555,7 @@ def build_metadata_cell(sample_id: str, query_text: str, api_modules: List[str],
         "**DB Type**: Base Case\n\n",
         "**Case Description**:\n\n",
         "**Global/Context Variables:**\n",
-        "** Datetime Context Variables:**\n",
+        "**Datetime Context Variables:**\n",
     ]
     if dt_value:
         md.append(f"- {dt_value}\n\n")
@@ -820,7 +820,7 @@ def build_golden_answer_cell(working_row: Dict[str, str]) -> nbformat.NotebookNo
     """
     golden = (working_row.get("final_golden_response") or "").strip()
     if golden:
-        content = "# Golden Answer\n\n### " + golden
+        content = "# Golden Answer\n\n - " + golden
     else:
         content = "# Golden Answer\n\n### (empty)"
     return new_markdown_cell(content)

@@ -1,20 +1,3 @@
-# generator_working_sample_parallel.py
-# Working Sheet → Colab notebooks in Drive (parallel) + summary tab (PST timestamp)
-#
-# NEW (this change):
-#  • Action block now begins with an explicit Imports section (mirrors Initial DB imports).
-#    - We import the API modules needed for the final services + their dependencies.
-#    - We also import json/uuid/datetime/os and the notes_and_lists utils (when applicable).
-#
-# PREVIOUS FIXES PRESERVED:
-#  • Initial DB selection is DATA-DRIVEN by scanning all <service>_initial_db columns.
-#  • Action block applies FINAL DB changes using the SAME porting calls as initial stage.
-#  • WhatsApp final stage: use contacts_final_db if present; else fall back to contacts_initial_db from Template.
-#  • USER_LOCATION sanitized to one line before injection.
-#  • Final Assertion prefers MODIFIED_FINAL_ASSERTION_COL_NAME over FINAL_ASSERTION_COL_NAME.
-#  • Initial Assertion is a commented summary (no execution).
-#  • Parallel generation, Drive/Sheets I/O, summary (PST) unchanged.
-
 from __future__ import annotations
 from dateutil import parser
 import os, sys, re, json, ast, time, pprint, logging, traceback
@@ -556,15 +539,30 @@ def upsert_summary_sheet_ws(sheets, spreadsheet_id: str, sheet_name: str, rows: 
         sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": req}).execute()
 
 # ---------- Notebook builders
-def build_metadata_cell(sample_id: str, query_text: str, api_modules: List[str]):
+def build_metadata_cell(sample_id: str, query_text: str, api_modules: List[str], query_date: str):
+    # Parse query_date similar to Freezegun logic: validate with dateutil.parser; if invalid, omit.
+    dt_value = ""
+    if query_date:
+        try:
+            _ = parser.parse(query_date)
+            dt_value = query_date.strip()
+        except Exception:
+            dt_value = ""
+
     md = [
         f"**Sample ID**: {sample_id}\n\n",
         f"**Query**: {query_text or ''}\n\n",
         "**DB Type**: Base Case\n\n",
         "**Case Description**:\n\n",
-        "**Global/Context Variables:**\n\n",
-        "**APIs:**\n",
+        "**Global/Context Variables:**\n",
+        "** Datetime Context Variables:**\n",
     ]
+    if dt_value:
+        md.append(f"- {dt_value}\n\n")
+    else:
+        md.append("\n")  # keep structure even if empty
+
+    md.append("**APIs:**\n")
     md += [f"- {a}\n" for a in api_modules]
     md.append("\n**Databases:**")
     return new_markdown_cell("".join(md))
@@ -593,7 +591,7 @@ def build_import_and_port_cell_ws(
     code_map_initial: Dict[str, str],
     meta_map_initial: Dict[str, Tuple[str, str]],
     user_location_value: str,
-    query_date:str
+    query_date: str
 ):
     L: List[str] = []
     L.append("# Imports")
@@ -816,6 +814,17 @@ def build_final_assertion_cell(working_row: Dict[str, str]) -> nbformat.Notebook
     chosen = reescape_newlines_inside_string_literals(chosen).strip()
     return new_code_cell(chosen + ("\n" if chosen else ""))
 
+def build_golden_answer_cell(working_row: Dict[str, str]) -> nbformat.NotebookNode:
+    """
+    Markdown cell showing the Golden Answer header and the text from 'final_golden_response'.
+    """
+    golden = (working_row.get("final_golden_response") or "").strip()
+    if golden:
+        content = "# Golden Answer\n\n### " + golden
+    else:
+        content = "# Golden Answer\n\n### (empty)"
+    return new_markdown_cell(content)
+
 def build_empty_block(title: str):
     return [new_markdown_cell(f"# {title}"), new_code_cell("")]
 
@@ -872,7 +881,7 @@ def generate_notebook_for_row_ws(
     final_services = split_services(working_row.get("final_state_changes_needed", ""))
 
     nb = new_notebook()
-    nb.cells.append(build_metadata_cell(sample_id, query_txt, api_modules))
+    nb.cells.append(build_metadata_cell(sample_id, query_txt, api_modules, query_date))
     w = build_warnings_cell(issues)
     if w: nb.cells.append(w)
     nb.cells.append(new_markdown_cell("# Set Up"))
@@ -906,6 +915,9 @@ def generate_notebook_for_row_ws(
     # Action block: FINAL DB porting (with imports)
     nb.cells.append(new_markdown_cell("# Action"))
     nb.cells.append(build_action_final_dbs_cell_ws(final_services, working_row, code_map_final, meta_map_final, template_row))
+
+    # Golden Answer (markdown) — right after Action, before Final Assertion
+    nb.cells.append(build_golden_answer_cell(working_row))
 
     nb.cells.append(new_markdown_cell("# Final Assertion"))
     nb.cells.append(build_final_assertion_cell(working_row))
@@ -942,11 +954,11 @@ def add_freezegun_block(L,query_date):
         '    """',
         '    Starts a frozen time context using freezegun.',
         '    """',
-        '    ignore_pkgs = {"ipykernel", "ipyparallel", "ipython", "jupyter-server"}',
+        '    ignore_pkgs = {\"ipykernel\", \"ipyparallel\", \"ipython\", \"jupyter-server\"}',
         '    freezegun.configure(extend_ignore_list=list(ignore_pkgs))',
         '    freezer = freeze_time(current_date)',
         '    freezer.start()',
-        '    print("--> FROZEN TIME:", datetime.now())',
+        '    print(\"--> FROZEN TIME:\", datetime.now())',
         '    return freezer',
         ""  # Empty line after function
     ])

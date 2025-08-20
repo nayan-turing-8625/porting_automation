@@ -554,7 +554,7 @@ def build_metadata_cell(sample_id: str, query_text: str, api_modules: List[str],
         f"**Query**: {query_text or ''}\n\n",
         "**DB Type**: Base Case\n\n",
         "**Case Description**:\n\n",
-        "**Global/Context Variables:**\n",
+        "**Global/Context Variables:**\n\n\n",
         "**Datetime Context Variables:**\n",
     ]
     if dt_value:

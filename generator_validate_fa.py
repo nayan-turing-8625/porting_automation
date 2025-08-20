@@ -820,7 +820,7 @@ def build_golden_answer_cell(working_row: Dict[str, str]) -> nbformat.NotebookNo
     """
     golden = (working_row.get("final_golden_response") or "").strip()
     if golden:
-        content = "# Golden Answer\n\n - " + golden
+        content = "# Golden Answer\n\n " + golden
     else:
         content = "# Golden Answer\n\n### (empty)"
     return new_markdown_cell(content)

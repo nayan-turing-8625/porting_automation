@@ -61,6 +61,7 @@ DEFAULT_DB_PATHS: Dict[str, str] = {
     "clock":              "/content/DBs/ClockDefaultDB.json",
     "generic_reminders":  "/content/DBs/GenericRemindersDefaultDB.json",
     "notes_and_lists":    "/content/DBs/NotesAndListsDefaultDB.json",
+    "device_actions":    "/content/DBs/DeviceActionsDefaultDB.json",
 }
 
 SERVICE_SPECS: Dict[str, Dict[str, Any]] = {
@@ -73,6 +74,7 @@ SERVICE_SPECS: Dict[str, Dict[str, Any]] = {
     "clock":            {"api": "clock",              "requires": []},
     "reminders":        {"api": "generic_reminders",  "requires": []},
     "notes":            {"api": "notes_and_lists",    "requires": []},
+    "device_actions":   {"api": "device_actions",     "requires": []},
 }
 
 # json_vars: (sheet_column, notebook_var_name, inject_as_dict)
@@ -122,6 +124,10 @@ PORTING_SPECS: Dict[str, Dict[str, Any]] = {
         "json_vars":   [("notes_initial_db", "notes_src_json", False)],
         "call":        "port_notes_and_lists_initial_db(notes_src_json)",
     },
+     "device_actions": {
+        "json_vars":   [("device_actions_initial_db", "device_actions_src_json", False)],
+        "call":        "port_device_actions_db(device_actions_initial_db)",
+    },
 }
 
 REQUIRED_INPUTS: Dict[str, List[str]] = {
@@ -134,6 +140,7 @@ REQUIRED_INPUTS: Dict[str, List[str]] = {
     "clock":           ["clock_initial_db"],
     "reminders":       ["reminders_initial_db"],
     "notes":           ["notes_initial_db"],
+    "device_actions":  ["device_actions_initial_db"],
 }
 
 # ----------------------------
@@ -170,6 +177,7 @@ def normalize_service_token(tok: str) -> str:
         "message": "whatsapp", "messages": "whatsapp",
         "reminder": "reminders", "generic reminders": "reminders",
         "notes and lists": "notes", "notes_and_lists": "notes",
+        "device actions": "device_actions",
     }
     return synonyms.get(t, t)
 

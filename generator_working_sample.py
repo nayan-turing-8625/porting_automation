@@ -95,6 +95,7 @@ DEFAULT_DB_PATHS: Dict[str, str] = {
     "clock":              "/content/DBs/ClockDefaultDB.json",
     "generic_reminders":  "/content/DBs/GenericRemindersDefaultDB.json",
     "notes_and_lists":    "/content/DBs/NotesAndListsDefaultDB.json",
+    "device_actions":     "/content/DBs/DeviceActionsDefaultDB.json",
 }
 
 # =========================
@@ -110,6 +111,7 @@ SERVICE_SPECS: Dict[str, Dict[str, Any]] = {
     "clock":            {"api": "clock",              "requires": []},
     "reminders":        {"api": "generic_reminders",  "requires": []},
     "notes":            {"api": "notes_and_lists",    "requires": []},
+    "device_actions":   {"api": "device_actions",     "requires": []},
 }
 
 # =========================
@@ -160,6 +162,10 @@ PORTING_SPECS: Dict[str, Dict[str, Any]] = {
         "json_vars":   [("notes_initial_db", "notes_src_json", False)],
         "call":        "port_notes_and_lists_initial_db(notes_src_json)",
     },
+     "device_actions": {
+        "json_vars":   [("device_actions_initial_db", "device_actions_src_json", False)],
+        "call":        "port_device_actions_db(device_actions_initial_db)",
+    },
 }
 
 # For FINAL DB injection we override the primary var to the service's own var
@@ -173,6 +179,7 @@ SELF_VAR_BY_SERVICE: Dict[str, Tuple[str, bool]] = {
     "clock":           ("clock_src_json",    False),
     "reminders":       ("reminders_src_json",False),
     "notes":           ("notes_src_json",    False),
+    "device_actions":  ("device_actions_src_json", False),
 }
 
 # Primary initial DB column per service
@@ -186,6 +193,7 @@ PRIMARY_INITIAL_DB_COL: Dict[str, str] = {
     "clock":           "clock_initial_db",
     "reminders":       "reminders_initial_db",
     "notes":           "notes_initial_db",
+    "device_actions": "device_actions_initial_db",
 }
 
 # =========================

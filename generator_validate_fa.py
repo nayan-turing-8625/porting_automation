@@ -945,9 +945,7 @@ def add_freezegun_block(L,query_date):
     L.append("### Freezegun Block Start")
     L.append("import freezegun")
     L.append("from freezegun import freeze_time")
-    L.append("from datetime import datetime")
     L.append("")  # Empty line for readability
-    
     # Add the start_frozen_time function definition
     L.extend([
         "def start_frozen_time(current_date):",
@@ -964,6 +962,8 @@ def add_freezegun_block(L,query_date):
     ])
     L.append(f'current_time = "{query_date}"')
     L.append("start_frozen_time(current_time)")
+    L.append("from datetime import datetime")
+    L.append(print("--> FROZEN TIME:\", datetime.now())")
     L.append("### Freezegun Block End")
     L.append("")  # Empty line for readability
 

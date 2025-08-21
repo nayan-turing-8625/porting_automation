@@ -895,11 +895,10 @@ def generate_notebook_for_row_ws(
     user_loc = working_row.get("user_location", "")
     query_date = (working_row.get("query_date") or "").strip()
     uploaded_file_url = (working_row.get("video_prompt") or "").strip()
-
     final_services = split_services(working_row.get("final_state_changes_needed", ""))
 
     nb = new_notebook()
-    nb.cells.append(build_metadata_cell(sample_id, query_txt, api_modules, query_date,))
+    nb.cells.append(build_metadata_cell(sample_id, query_txt, api_modules, query_date,uploaded_file_url))
     w = build_warnings_cell(issues)
     if w: nb.cells.append(w)
     nb.cells.append(new_markdown_cell("# Set Up"))

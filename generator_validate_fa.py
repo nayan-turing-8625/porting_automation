@@ -974,14 +974,13 @@ def add_freezegun_block(L,query_date):
         '    freezegun.configure(extend_ignore_list=list(ignore_pkgs))',
         '    freezer = freeze_time(current_date)',
         '    freezer.start()',
-        '    print(\"--> FROZEN TIME:\", datetime.now())',
         '    return freezer',
         ""  # Empty line after function
     ])
     L.append(f'current_time = "{query_date}"')
     L.append("start_frozen_time(current_time)")
     L.append("from datetime import datetime")
-    L.append(print("--> FROZEN TIME:\", datetime.now())")
+    L.append('print("--> FROZEN TIME:", datetime.now())')
     L.append("### Freezegun Block End")
     L.append("")  # Empty line for readability
 

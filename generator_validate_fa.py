@@ -895,6 +895,8 @@ def generate_notebook_for_row_ws(
     user_loc = working_row.get("user_location", "")
     query_date = (working_row.get("query_date") or "").strip()
     uploaded_file_url = (working_row.get("video_prompt") or "").strip()
+    print(working_row)
+    print(uploaded_file_url)
     final_services = split_services(working_row.get("final_state_changes_needed", ""))
 
     nb = new_notebook()

@@ -21,7 +21,8 @@ SPREADSHEET_ID       = os.environ.get("SPREADSHEET_ID", "").strip()
 SOURCE_SHEET_NAME    = os.environ.get("SOURCE_SHEET_NAME", "Template Colab").strip()
 SOURCE_WORKING_SHEET_NAME = os.environ.get("SOURCE_WORKING_SHEET_NAME", "Working_Sheet").strip()
 
-CODE_SPREADSHEET_ID  = os.environ.get("CODE_SPREADSHEET_ID", "").strip()  # optional
+
+CODE_SPREADSHEET_ID  = "1nY7dC2pn4dQcBdRH3Ar5o1d0rv9UOOW_kXRamzN8GCM" # optional
 CODE_SHEET_NAME      = os.environ.get("CODE_SHEET_NAME", "Translate_JSONs").strip()
 
 SUMMARY_SHEET_NAME_WORKING_AUTOMATION = os.environ.get(
@@ -1029,7 +1030,7 @@ def main():
     _, templ_rows = read_sheet_as_dicts(sheets, SPREADSHEET_ID, templ_name)
     templ_by_task: Dict[str, Dict[str, str]] = { (r.get("task_id") or "").strip(): r for r in templ_rows if (r.get("task_id") or "").strip() }
 
-    code_sheet_id = CODE_SPREADSHEET_ID or SPREADSHEET_ID
+    code_sheet_id = CODE_SPREADSHEET_ID
     log.info("Reading INITIAL porting code from '%s' (spreadsheet id: %s)", CODE_SHEET_NAME, code_sheet_id)
     code_map_initial, meta_map_initial = build_service_code_map_with_logs(
         sheets,

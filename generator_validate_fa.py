@@ -597,7 +597,7 @@ def build_import_and_port_cell_ws(
     L: List[str] = []
     L.append("# Imports")
     # Add Freezegun as first import
-    L = add_freezegun_block(L,query_date)
+    # L = add_freezegun_block(L,query_date)
     for m in api_modules: L.append(f"import {m}")
     if "notes_and_lists" in api_modules:
         L.append("from notes_and_lists.SimulationEngine.utils import update_title_index, update_content_index")

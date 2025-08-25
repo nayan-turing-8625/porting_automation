@@ -540,7 +540,13 @@ def upsert_summary_sheet_ws(sheets, spreadsheet_id: str, sheet_name: str, rows: 
         sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": req}).execute()
 
 # ---------- Notebook builders
-def build_metadata_cell(sample_id: str, query_text: str, api_modules: List[str], query_date: str):
+def build_metadata_cell(
+    sample_id: str,
+    query_text: str,
+    api_modules: List[str],
+    query_date: str,
+    uploaded_file_url: str = "",
+):
     # Parse query_date similar to Freezegun logic: validate with dateutil.parser; if invalid, omit.
     dt_value = ""
     if query_date:
@@ -555,9 +561,18 @@ def build_metadata_cell(sample_id: str, query_text: str, api_modules: List[str],
         f"**Query**: {query_text or ''}\n\n",
         "**DB Type**: Base Case\n\n",
         "**Case Description**:\n\n",
+    ]
+
+    if uploaded_file_url:
+        md.append("```\n<additional_data>\n")
+        md.append(f'  <current_uploaded_file src="{uploaded_file_url}" />\n')
+        md.append("</additional_data>\n```\n\n")
+
+    md.extend([
         "**Global/Context Variables:**\n\n\n",
         "**Datetime Context Variables:**\n",
-    ]
+    ])
+
     if dt_value:
         md.append(f"- {dt_value}\n\n")
     else:
@@ -566,7 +581,9 @@ def build_metadata_cell(sample_id: str, query_text: str, api_modules: List[str],
     md.append("**APIs:**\n")
     md += [f"- {a}\n" for a in api_modules]
     md.append("\n**Databases:**")
+
     return new_markdown_cell("".join(md))
+
 
 def build_warnings_cell(issues: Dict[str, Any]):
     msgs=[]
@@ -878,11 +895,13 @@ def generate_notebook_for_row_ws(
     query_txt = (working_row.get("query") or "").strip()
     user_loc = working_row.get("user_location", "")
     query_date = (working_row.get("query_date") or "").strip()
-
+    uploaded_file_url = (working_row.get("video_prompt") or "").strip()
+    print(working_row)
+    print(uploaded_file_url)
     final_services = split_services(working_row.get("final_state_changes_needed", ""))
 
     nb = new_notebook()
-    nb.cells.append(build_metadata_cell(sample_id, query_txt, api_modules, query_date))
+    nb.cells.append(build_metadata_cell(sample_id, query_txt, api_modules, query_date,uploaded_file_url))
     w = build_warnings_cell(issues)
     if w: nb.cells.append(w)
     nb.cells.append(new_markdown_cell("# Set Up"))
@@ -921,7 +940,7 @@ def generate_notebook_for_row_ws(
     nb.cells.append(build_golden_answer_cell(working_row))
 
     nb.cells.append(new_markdown_cell("# Final Assertion"))
-    nb.cells.append(build_final_assertion_cell(working_row))
+    nb.cells.append(new_code_cell(''))
 
     nb.metadata["colab"] = {"provenance": []}
     nb.metadata["language_info"] = {"name": "python"}

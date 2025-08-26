@@ -626,6 +626,7 @@ def build_import_and_port_cell_ws(
     # Add Freezegun as first import
     # L = add_freezegun_block(L,query_date)
     for m in api_modules: L.append(f"import {m}")
+    for m in public_tools or []: L.append(f"import {m}")
     if "notes_and_lists" in api_modules:
         L.append("from notes_and_lists.SimulationEngine.utils import update_title_index, update_content_index")
         L.append("from typing import Dict, Any")
@@ -695,6 +696,7 @@ def build_action_final_dbs_cell_ws(
     code_map_final: Dict[str, str],
     meta_map_final: Dict[str, Tuple[str, str]],
     template_row: Dict[str, str],
+    public_tools:list[str]
 ):
     """
     Builds the Action block code cell that applies FINAL DB changes.
@@ -707,6 +709,7 @@ def build_action_final_dbs_cell_ws(
     action_api_modules = api_modules_for_services(final_services)
     L.append("# Imports (Action)")
     for m in action_api_modules: L.append(f"import {m}")
+    for m in public_tools or []: L.append(f"import {m}")
     if "notes_and_lists" in action_api_modules:
         L.append("from notes_and_lists.SimulationEngine.utils import update_title_index, update_content_index")
         L.append("from typing import Dict, Any")
@@ -972,7 +975,7 @@ def generate_notebook_for_row_ws(
 
     # Action block: FINAL DB porting (with imports)
     nb.cells.append(new_markdown_cell("# Action"))
-    nb.cells.append(build_action_final_dbs_cell_ws(final_services, working_row, code_map_final, meta_map_final, template_row))
+    nb.cells.append(build_action_final_dbs_cell_ws(final_services, working_row, code_map_final, meta_map_final, template_row,public_tools))
 
     # Golden Answer (markdown) — right after Action, before Final Assertion
     nb.cells.append(build_golden_answer_cell(working_row))

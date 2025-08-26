@@ -551,7 +551,7 @@ def build_metadata_cell(
     api_modules: List[str],
     query_date: str,
     uploaded_file_url: str = "",
-    public_tools:list[str]
+    public_tools:list[str] = []
 ):
     # Parse query_date similar to Freezegun logic: validate with dateutil.parser; if invalid, omit.
     dt_value = ""

@@ -40,6 +40,12 @@ MYDRIVE_ROOT         = "/content/drive/MyDrive"
 CODEBASE_FOLDER_NAME = "port_automation"
 CODEBASE_ROOT        = os.path.join(MYDRIVE_ROOT, CODEBASE_FOLDER_NAME)
 
+
+
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+DEFAULT_GEMINI_MODEL_NAME = os.environ.get('DEFAULT_GEMINI_MODEL_NAME',"gemini-2.5-pro-preview-03-25")
+LIVE_API_URL = os.environ.get('LIVE_API_URL')
+
 # =========================
 # Logging
 # =========================
@@ -545,6 +551,7 @@ def build_metadata_cell(
     api_modules: List[str],
     query_date: str,
     uploaded_file_url: str = "",
+    public_tools:list[str]
 ):
     # Parse query_date similar to Freezegun logic: validate with dateutil.parser; if invalid, omit.
     dt_value = ""
@@ -579,6 +586,8 @@ def build_metadata_cell(
 
     md.append("**APIs:**\n")
     md += [f"- {a}\n" for a in api_modules]
+    if public_tools:
+        md += [f"- {p}\n" for p in public_tools]
     md.append("\n**Databases:**")
 
     return new_markdown_cell("".join(md))
@@ -608,12 +617,14 @@ def build_import_and_port_cell_ws(
     code_map_initial: Dict[str, str],
     meta_map_initial: Dict[str, Tuple[str, str]],
     user_location_value: str,
-    query_date: str
+    query_date: str,
+    public_tools:List[str]
 ):
     L: List[str] = []
     L.append("# Imports")
+    L = add_gemini_keys(L,public_tools
     # Add Freezegun as first import
-    L = add_freezegun_block(L,query_date)
+    # L = add_freezegun_block(L,query_date)
     for m in api_modules: L.append(f"import {m}")
     if "notes_and_lists" in api_modules:
         L.append("from notes_and_lists.SimulationEngine.utils import update_title_index, update_content_index")
@@ -870,6 +881,33 @@ def preflight_row_ws(template_row: Dict[str, str], selected_services: List[str])
                 issues["json_errors"][col] = str(e)
     return {"expanded": expanded, "issues": issues}
 
+def _parse_public_tools(public_tools_str: str) -> list[str]:
+    """
+    Parse the 'public_content_sources_used' string into a normalized list of tool identifiers.
+    
+    Examples:
+        "Google Search" -> ["google_search"]
+        "Google Maps" -> ["google_maps_live"]
+        "YouTube" -> ["youtube_tool"]
+        "Google Search | Google Maps" -> ["google_search", "google_maps_live"]
+    """
+    if not public_tools_str:
+        return []
+
+    # Split on "|" and normalize spacing
+    raw_tools = [part.strip() for part in public_tools_str.split("|") if part.strip()]
+
+    # Mapping from  names -> internal identifiers
+    mapping = {
+        "Google Search": "google_search",
+        "Google Maps": "google_maps_live",
+        "YouTube": "youtube_tool",
+    }
+
+    # Normalize using mapping (skip unknowns gracefully)
+    return [mapping[tool] for tool in raw_tools if tool in mapping]
+
+
 def generate_notebook_for_row_ws(
     working_row: Dict[str, str],
     template_row: Dict[str, str],
@@ -895,12 +933,12 @@ def generate_notebook_for_row_ws(
     user_loc = working_row.get("user_location", "")
     query_date = (working_row.get("query_date") or "").strip()
     uploaded_file_url = (working_row.get("video_prompt") or "").strip()
-    print(working_row)
-    print(uploaded_file_url)
+    public_tools = _parse_public_tools((working_row.get("public_content_sources_used") or "").strip())
     final_services = split_services(working_row.get("final_state_changes_needed", ""))
 
+
     nb = new_notebook()
-    nb.cells.append(build_metadata_cell(sample_id, query_txt, api_modules, query_date,uploaded_file_url))
+    nb.cells.append(build_metadata_cell(sample_id, query_txt, api_modules, query_date,uploaded_file_url,public_tools))
     w = build_warnings_cell(issues)
     if w: nb.cells.append(w)
     nb.cells.append(new_markdown_cell("# Set Up"))
@@ -915,7 +953,8 @@ def generate_notebook_for_row_ws(
             code_map_initial=code_map_initial,
             meta_map_initial=meta_map_initial,
             user_location_value=user_loc,
-            query_date=query_date
+            query_date=query_date.
+            public_tools=public_tools
         )
     )
 
@@ -987,6 +1026,22 @@ def add_freezegun_block(L,query_date):
 
     return L
 
+def add_gemini_keys(L, public_tools):
+    if public_tools:
+        if GEMINI_API_KEY and DEFAULT_GEMINI_MODEL_NAME and LIVE_API_URL:
+            # Add Gemini keys if only public tools are used
+            L.append("### Public Live Tools Env")
+            L.append("import os")
+            L.append(f"os.environ['GEMINI_API_KEY'] = '{GEMINI_API_KEY}'")
+            L.append(f"os.environ['GOOGLE_API_KEY'] = '{GEMINI_API_KEY}'")
+            L.append(f"os.environ['DEFAULT_GEMINI_MODEL_NAME'] = '{DEFAULT_GEMINI_MODEL_NAME}'")
+            L.append(f"os.environ['LIVE_API_URL'] = '{LIVE_API_URL}'")
+        else:
+            raise ValueError(
+                "Failed to generate templates. "
+                "Required `GEMINI_API_KEY` & `DEFAULT_GEMINI_MODEL_NAME` to use public tools."
+            )
+    return L
 
 # ---------- Parallel worker
 def build_and_upload_worker(

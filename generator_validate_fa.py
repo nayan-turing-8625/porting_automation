@@ -28,7 +28,7 @@ CODE_SHEET_NAME      = os.environ.get("CODE_SHEET_NAME", "Translate_JSONs").stri
 
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 DEFAULT_GEMINI_MODEL_NAME = os.environ.get('DEFAULT_GEMINI_MODEL_NAME',"gemini-2.5-pro-preview-03-25")
-
+LIVE_API_URL = os.environ.get('LIVE_API_URL')
 
 
 
@@ -608,7 +608,7 @@ def build_import_and_port_cell_ws(
     L: List[str] = []
     L.append("# Imports")
     L = add_gemini_keys(L,public_tools)
-    L = add_freezegun_block(L,query_date)
+    # L = add_freezegun_block(L,query_date)
  
     for m in api_modules: L.append(f"import {m}")
     if "notes_and_lists" in api_modules:
@@ -1014,13 +1014,14 @@ def add_freezegun_block(L,query_date):
 
 def add_gemini_keys(L, public_tools):
     if public_tools:
-        if GEMINI_API_KEY and DEFAULT_GEMINI_MODEL_NAME:
+        if GEMINI_API_KEY and DEFAULT_GEMINI_MODEL_NAME and LIVE_API_URL:
             # Add Gemini keys if only public tools are used
             L.append("### Public Live Tools Env")
             L.append("import os")
             L.append(f"os.environ['GEMINI_API_KEY'] = '{GEMINI_API_KEY}'")
             L.append(f"os.environ['GOOGLE_API_KEY'] = '{GEMINI_API_KEY}'")
             L.append(f"os.environ['DEFAULT_GEMINI_MODEL_NAME'] = '{DEFAULT_GEMINI_MODEL_NAME}'")
+            L.append(f"os.environ['LIVE_API_URL'] = '{LIVE_API_URL}'")
         else:
             raise ValueError(
                 "Failed to generate templates. "

@@ -680,6 +680,7 @@ def build_action_final_dbs_cell_ws(
     code_map_final: Dict[str, str],
     meta_map_final: Dict[str, Tuple[str, str]],
     template_row: Dict[str, str],
+    public_tools:list[str]
 ):
     """
     Builds the Action block code cell that applies FINAL DB changes.

@@ -622,7 +622,7 @@ def build_import_and_port_cell_ws(
 ):
     L: List[str] = []
     L.append("# Imports")
-    L = add_gemini_keys(L,public_tools
+    L = add_gemini_keys(L,public_tools)
     # Add Freezegun as first import
     # L = add_freezegun_block(L,query_date)
     for m in api_modules: L.append(f"import {m}")

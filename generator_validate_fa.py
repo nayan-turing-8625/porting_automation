@@ -953,7 +953,7 @@ def generate_notebook_for_row_ws(
             code_map_initial=code_map_initial,
             meta_map_initial=meta_map_initial,
             user_location_value=user_loc,
-            query_date=query_date.
+            query_date=query_date,
             public_tools=public_tools
         )
     )

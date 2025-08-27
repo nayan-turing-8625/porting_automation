@@ -544,12 +544,7 @@ def build_metadata_cell(sample_id: str, query_text: str, api_modules: List[str],
     # Parse query_date similar to Freezegun logic: validate with dateutil.parser; if invalid, omit.
     dt_value = ""
     if query_date:
-        try:
-            _ = parser.parse(query_date)
-            dt_value = query_date.strip()
-        except Exception:
-            dt_value = ""
-
+        dt_value = re.sub(r"^[\*'\s]+", "", query_date).strip()
     md = [
         f"**Sample ID**: {sample_id}\n\n",
         f"**Query**: {query_text or ''}\n\n",

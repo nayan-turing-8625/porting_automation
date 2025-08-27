@@ -21,8 +21,17 @@ SPREADSHEET_ID       = os.environ.get("SPREADSHEET_ID", "").strip()
 SOURCE_SHEET_NAME    = os.environ.get("SOURCE_SHEET_NAME", "Template Colab").strip()
 SOURCE_WORKING_SHEET_NAME = os.environ.get("SOURCE_WORKING_SHEET_NAME", "Working_Sheet").strip()
 
+
 CODE_SPREADSHEET_ID  = "1nY7dC2pn4dQcBdRH3Ar5o1d0rv9UOOW_kXRamzN8GCM" # optional
 CODE_SHEET_NAME      = os.environ.get("CODE_SHEET_NAME", "Translate_JSONs").strip()
+
+
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+DEFAULT_GEMINI_MODEL_NAME = os.environ.get('DEFAULT_GEMINI_MODEL_NAME',"gemini-2.5-pro-preview-03-25")
+LIVE_API_URL = os.environ.get('LIVE_API_URL')
+
+
+
 
 SUMMARY_SHEET_NAME_WORKING_AUTOMATION = os.environ.get(
     "SUMMARY_SHEET_NAME_WORKING_AUTOMATION_FA_VAL", "Working_Sheet_Generated_Colabs"
@@ -557,7 +566,6 @@ def build_metadata_cell(
     dt_value = ""
     if query_date:
         dt_value = re.sub(r"^[\*'\s]+", "", query_date).strip()
-
     md = [
         f"**Sample ID**: {sample_id}\n\n",
         f"**Query**: {query_text or ''}\n\n",
@@ -619,7 +627,6 @@ def build_import_and_port_cell_ws(
     L: List[str] = []
     L.append("# Imports")
     L = add_gemini_keys(L,public_tools)
-    # Add Freezegun as first import
     # L = add_freezegun_block(L,query_date)
     for m in api_modules: L.append(f"import {m}")
     for m in public_tools or []: L.append(f"import {m}")
@@ -1042,6 +1049,24 @@ def add_gemini_keys(L, public_tools):
             )
     return L
 
+def add_gemini_keys(L, public_tools):
+    if public_tools:
+        if GEMINI_API_KEY and DEFAULT_GEMINI_MODEL_NAME and LIVE_API_URL:
+            # Add Gemini keys if only public tools are used
+            L.append("### Public Live Tools Env")
+            L.append("import os")
+            L.append(f"os.environ['GEMINI_API_KEY'] = '{GEMINI_API_KEY}'")
+            L.append(f"os.environ['GOOGLE_API_KEY'] = '{GEMINI_API_KEY}'")
+            L.append(f"os.environ['DEFAULT_GEMINI_MODEL_NAME'] = '{DEFAULT_GEMINI_MODEL_NAME}'")
+            L.append(f"os.environ['LIVE_API_URL'] = '{LIVE_API_URL}'")
+        else:
+            raise ValueError(
+                "Failed to generate templates. "
+                "Required `GEMINI_API_KEY` & `DEFAULT_GEMINI_MODEL_NAME` to use public tools."
+            )
+    return L
+
+
 # ---------- Parallel worker
 def build_and_upload_worker(
     idx: int,
@@ -1102,7 +1127,7 @@ def main():
     _, templ_rows = read_sheet_as_dicts(sheets, SPREADSHEET_ID, templ_name)
     templ_by_task: Dict[str, Dict[str, str]] = { (r.get("task_id") or "").strip(): r for r in templ_rows if (r.get("task_id") or "").strip() }
 
-    code_sheet_id = CODE_SPREADSHEET_ID or SPREADSHEET_ID
+    code_sheet_id = CODE_SPREADSHEET_ID
     log.info("Reading INITIAL porting code from '%s' (spreadsheet id: %s)", CODE_SHEET_NAME, code_sheet_id)
     code_map_initial, meta_map_initial = build_service_code_map_with_logs(
         sheets,

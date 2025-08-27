@@ -981,7 +981,7 @@ def generate_notebook_for_row_ws(
     nb.cells.append(build_golden_answer_cell(working_row))
 
     nb.cells.append(new_markdown_cell("# Final Assertion"))
-    nb.cells.append(new_code_cell(''))
+    nb.cells.append(build_final_assertion_cell(working_row))
 
     nb.metadata["colab"] = {"provenance": []}
     nb.metadata["language_info"] = {"name": "python"}

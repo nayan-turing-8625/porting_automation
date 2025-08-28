@@ -22,7 +22,7 @@ SOURCE_SHEET_NAME    = os.environ.get("SOURCE_SHEET_NAME", "Template Colab").str
 SOURCE_WORKING_SHEET_NAME = os.environ.get("SOURCE_WORKING_SHEET_NAME", "Working_Sheet").strip()
 
 
-CODE_SPREADSHEET_ID  = "1nY7dC2pn4dQcBdRH3Ar5o1d0rv9UOOW_kXRamzN8GCM" # optional
+CODE_SPREADSHEET_ID  = os.environ.get("CODE_SPREADSHEET_ID", "1nY7dC2pn4dQcBdRH3Ar5o1d0rv9UOOW_kXRamzN8GCM")  # optional
 CODE_SHEET_NAME      = os.environ.get("CODE_SHEET_NAME", "Translate_JSONs").strip()
 
 

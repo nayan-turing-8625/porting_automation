@@ -924,22 +924,8 @@ def generate_notebook_for_row_ws(
 
     # API modules list (selected + dependencies)
     api_modules: List[str] = api_modules_for_services(expanded)
-
-    SAMPLE_ID_FORMAT = "Gemini_Apps_Data_Port_{task_id}_turn_{query_order}_{query_category}"
-
-    # Extract data from working_row with defaults
-    task_id = working_row.get("task_id", "")
-    query_order = working_row.get("query_order", "")
-    query_category = working_row.get("query_category", "").strip()
-
-    # Build sample_id
-    sample_id = SAMPLE_ID_FORMAT.format(
-        task_id=task_id,
-        query_order=query_order,
-        query_category=query_category
-    )
-
     # Extract other fields
+    sample_id = working_row.get("sample_id", "").strip() or working_row.get("Sample ID", "").strip()
     query_txt = working_row.get("query", "").strip()
     user_loc = working_row.get("user_location", "")
     query_date = working_row.get("query_date", "").strip()

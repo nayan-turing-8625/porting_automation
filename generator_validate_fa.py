@@ -1031,6 +1031,7 @@ def generate_notebook_for_row_ws(
     public_tools = _parse_public_tools(
         working_row.get("public_content_sources_used", "").strip()
     )
+    print('sample_id',sample_id)
 
 
 
@@ -1185,6 +1186,7 @@ def build_and_upload_worker(
         )
         safe_name = re.sub(r"[\\/:*?\"<>|]+", "_", sample_id).strip() or f"row-{idx}"
         fname = f"{safe_name}.ipynb"
+        print('fname',fname)
         # _, colab_url = upload_notebook_to_drive_with_retries(out_folder_id, fname, nb)
         _, colab_url = upsert_notebook_to_drive(out_folder_id, fname, nb)
         services_required_for_summary = (working_row.get("services_needed") or "").strip()

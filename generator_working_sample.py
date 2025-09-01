@@ -936,6 +936,7 @@ def generate_notebook_for_row_ws(
     sample_id = (working_row.get("Sample ID") or working_row.get("sample_id") or working_row.get("SampleID") or "").strip() or f"row-{idx}"
     query_txt = (working_row.get("query") or "").strip()
     user_loc = working_row.get("user_location", "")
+    print('sample_id',sample_id)
 
     final_services = split_services(working_row.get("final_state_changes_needed", ""))
 
@@ -1015,6 +1016,7 @@ def build_and_upload_worker(
         )
         safe_name = re.sub(r"[\\/:*?\"<>|]+", "_", sample_id).strip() or f"row-{idx}"
         fname = f"{safe_name}.ipynb"
+        print('fname',fname)
         # _, colab_url = upload_notebook_to_drive_with_retries(out_folder_id, fname, nb)
         _, colab_url = upsert_notebook_to_drive(out_folder_id, fname, nb)
         services_required_for_summary = (working_row.get("services_needed") or "").strip()

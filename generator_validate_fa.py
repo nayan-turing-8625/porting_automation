@@ -958,9 +958,7 @@ def generate_notebook_for_row_ws(
         working_row.get("public_content_sources_used", "").strip()
     )
 
-    # Get query category string and append to sample_id
-    query_category_str = QUERY_CATEGORY_MAPPING.get(query_category, "")
-    sample_id = f"{sample_id}_{query_category_str}"
+
 
     # Process final services
     final_services = split_services(

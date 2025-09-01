@@ -187,6 +187,21 @@ PRIMARY_INITIAL_DB_COL: Dict[str, str] = {
     "notes":           "notes_initial_db",
 }
 
+
+QUERY_CATEGORY_MAPPING: Dict[str, str] = {
+    "Retrieval + Actions": "RetrievalAndActions",
+    "Personal Content Retrieval": "PersonalContentRetrieval",
+    "Actions": "Actions",
+    "NEGATIVE - Actions": "NEGATIVEActions",
+    "NEGATIVE - Personal Content Retrieval": "NEGATIVEPersonalContentRetrieval",
+    "Public Content Retrieval": "PublicContentRetrieval",
+    "NEGATIVE - Public Content Retrieval": "NEGATIVEPublicContentRetrieval",
+    "NEGATIVE - Retrieval + Actions": "NEGATIVERetrievalAndActions",
+    "Visual Grounding + Retrieval/Actions": "VisualGroundingRetrievalAndActions",
+    "NEGATIVE - Visual Grounding + Retrieval/Actions": "NEGATIVEVisualGroundingRetrievalAndActions",
+}
+
+
 # =========================
 # Utils
 # =========================
@@ -938,8 +953,10 @@ def generate_notebook_for_row_ws(
     query_txt = (working_row.get("query") or "").strip()
     user_loc = working_row.get("user_location", "")
     query_date = (working_row.get("query_date") or "").strip()
-    uploaded_file_url = (working_row.get("video_prompt") or "").strip()
+    query_category = (working_row.get("query_category") or "").strip()
     public_tools = _parse_public_tools((working_row.get("public_content_sources_used") or "").strip())
+    query_category_str = QUERY_CATEGORY_MAPPING.get(query_category) or ""
+    sample_id = f"{sample_id}_{query_category_str}"
     final_services = split_services(working_row.get("final_state_changes_needed", ""))
 
 

@@ -414,8 +414,10 @@ def upsert_notebook_to_drive(folder_id: str, filename: str, nb: nbformat.Noteboo
 
             # 1. Search for an existing file with the same name in the folder
             q = f"'{folder_id}' in parents and name='{filename}' and trashed=false"
+            print('folder_id',folder_id)
             response = drive.files().list(q=q, fields="files(id)").execute()
             existing_files = response.get("files", [])
+            print('existing_files',existing_files)
 
             file_meta = {
                 "name": filename,
@@ -426,6 +428,7 @@ def upsert_notebook_to_drive(folder_id: str, filename: str, nb: nbformat.Noteboo
                 # 2. If file exists, UPDATE it
                 file_id = existing_files[0]["id"]
                 log.info(f"Updating existing notebook: {filename} (ID: {file_id})")
+                print(f"Updating existing notebook: {filename} (ID: {file_id})")
                 file = drive.files().update(
                     fileId=file_id,
                     media_body=media,
@@ -434,6 +437,7 @@ def upsert_notebook_to_drive(folder_id: str, filename: str, nb: nbformat.Noteboo
             else:
                 # 3. If file does not exist, CREATE it
                 log.info(f"Creating new notebook: {filename}")
+                print(f"Creating new notebook: {filename}")
                 file_meta["parents"] = [folder_id]
                 file = drive.files().create(
                     body=file_meta,

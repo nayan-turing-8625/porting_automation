@@ -1044,7 +1044,7 @@ def main():
 
     out_folder_id = resolve_output_folder_id(drive, WS_OUT_FOLDER_NAME, CODEBASE_FOLDER_NAME)
     log.info("Output notebooks Drive folder id: %s", out_folder_id)
-    empty_drive_folder(drive, out_folder_id)
+    # empty_drive_folder(drive, out_folder_id)
 
     ws_name = SOURCE_WORKING_SHEET_NAME or get_first_sheet_title(sheets, SPREADSHEET_ID)
     log.info("Reading Working Sheet rows from '%s' (spreadsheet id: %s)", ws_name, SPREADSHEET_ID)

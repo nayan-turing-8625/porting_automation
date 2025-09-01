@@ -925,15 +925,39 @@ def generate_notebook_for_row_ws(
     # API modules list (selected + dependencies)
     api_modules: List[str] = api_modules_for_services(expanded)
 
-    sample_id = (working_row.get("Sample ID") or working_row.get("sample_id") or working_row.get("SampleID") or "").strip() or f"row-{idx}"
-    query_txt = (working_row.get("query") or "").strip()
+    SAMPLE_ID_FORMAT = "Gemini_Apps_Data_Port_{task_id}_turn_{query_order}_{query_category}"
+
+    # Extract data from working_row with defaults
+    task_id = working_row.get("task_id", "")
+    query_order = working_row.get("query_order", "")
+    query_category = working_row.get("query_category", "").strip()
+
+    # Build sample_id
+    sample_id = SAMPLE_ID_FORMAT.format(
+        task_id=task_id,
+        query_order=query_order,
+        query_category=query_category
+    )
+
+    # Extract other fields
+    query_txt = working_row.get("query", "").strip()
     user_loc = working_row.get("user_location", "")
-    query_date = (working_row.get("query_date") or "").strip()
-    query_category = (working_row.get("query_category") or "").strip()
-    public_tools = _parse_public_tools((working_row.get("public_content_sources_used") or "").strip())
-    query_category_str = QUERY_CATEGORY_MAPPING.get(query_category) or ""
+    query_date = working_row.get("query_date", "").strip()
+
+    # Parse public tools
+    public_tools = _parse_public_tools(
+        working_row.get("public_content_sources_used", "").strip()
+    )
+
+    # Get query category string and append to sample_id
+    query_category_str = QUERY_CATEGORY_MAPPING.get(query_category, "")
     sample_id = f"{sample_id}_{query_category_str}"
-    final_services = split_services(working_row.get("final_state_changes_needed", ""))
+
+    # Process final services
+    final_services = split_services(
+        working_row.get("final_state_changes_needed", "")
+    )
+
 
     nb = new_notebook()
     nb.cells.append(build_metadata_cell(sample_id, query_txt, api_modules, query_date,public_tools))

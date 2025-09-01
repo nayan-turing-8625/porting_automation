@@ -401,7 +401,9 @@ def upsert_notebook_to_drive(folder_id: str, filename: str, nb: nbformat.Noteboo
             # 1. Search for an existing file with the same name in the folder
             q = f"'{folder_id}' in parents and name='{filename}' and trashed=false"
             print('folder_id',folder_id)
+            print('filename',filename)
             response = drive.files().list(q=q, fields="files(id)").execute()
+            print('response',response)
             existing_files = response.get("files", [])
             print('existing_files',existing_files)
 

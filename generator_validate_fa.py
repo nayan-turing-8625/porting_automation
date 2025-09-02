@@ -193,7 +193,7 @@ SELF_VAR_BY_SERVICE: Dict[str, Tuple[str, bool]] = {
     "reminders":       ("reminders_src_json",False),
     "notes":           ("notes_src_json",    False),
     "device_actions":  ("device_actions",    False),
-    "generic_media":   ("generic_media",    False),
+    "media_library":   ("generic_media",    False),
 
 }
 
@@ -209,7 +209,7 @@ PRIMARY_INITIAL_DB_COL: Dict[str, str] = {
     "reminders":       "reminders_initial_db",
     "notes":           "notes_initial_db",
     "device_actions":  "device_actions_initial_db",
-    "generic_media":  "generic_media_initial_db",
+    "media_library":  "generic_media_initial_db",
 }
 
 # =========================

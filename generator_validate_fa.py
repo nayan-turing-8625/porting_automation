@@ -264,8 +264,8 @@ def normalize_service_token(tok: str) -> str:
         "device actions": "device_actions",
         "notes and lists": "notes",
         "notes_and_lists": "notes",
-        "media_library": "generic_media",
-        "media library": "generic_media",
+        "media_library": "media_library",
+        "media library": "media_library",
         "generic_media": "generic_media",
         "generic media": "generic_media",
     }

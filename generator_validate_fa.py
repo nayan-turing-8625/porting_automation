@@ -94,6 +94,10 @@ DEFAULT_DB_PATHS: Dict[str, str] = {
     "clock":              "/content/DBs/ClockDefaultDB.json",
     "generic_reminders":  "/content/DBs/GenericRemindersDefaultDB.json",
     "notes_and_lists":    "/content/DBs/NotesAndListsDefaultDB.json",
+    "device_actions":    "/content/DBs/DeviceActionsDefaultDB.json",
+    "generic_media":    "/content/DBs/GenericMediaDefaultDB.json",
+    "media_library":    "/content/DBs/GenericMediaDefaultDB.json",
+
 }
 
 # =========================
@@ -109,7 +113,25 @@ SERVICE_SPECS: Dict[str, Dict[str, Any]] = {
     "clock":            {"api": "clock",              "requires": []},
     "reminders":        {"api": "generic_reminders",  "requires": []},
     "notes":            {"api": "notes_and_lists",    "requires": []},
+    "device_actions":   {"api": "device_actions",    "requires": []},
+    "generic_media":    {"api": "generic_media",    "requires": []},
+    "media_library":    {"api": "generic_media",    "requires": []},
+
 }
+
+QUERY_CATEGORY_MAPPING: Dict[str, str] = {
+    "Retrieval + Actions": "RetrievalAndActions",
+    "Personal Content Retrieval": "PersonalContentRetrieval",
+    "Actions": "Actions",
+    "NEGATIVE - Actions": "NEGATIVEActions",
+    "NEGATIVE - Personal Content Retrieval": "NEGATIVEPersonalContentRetrieval",
+    "Public Content Retrieval": "PublicContentRetrieval",
+    "NEGATIVE - Public Content Retrieval": "NEGATIVEPublicContentRetrieval",
+    "NEGATIVE - Retrieval + Actions": "NEGATIVERetrievalAndActions",
+    "Visual Grounding + Retrieval/Actions": "VisualGroundingRetrievalAndActions",
+    "NEGATIVE - Visual Grounding + Retrieval/Actions": "NEGATIVEVisualGroundingRetrievalAndActions",
+}
+
 
 # =========================
 # Porting specs (initial stage)
@@ -159,6 +181,18 @@ PORTING_SPECS: Dict[str, Dict[str, Any]] = {
         "json_vars":   [("notes_initial_db", "notes_src_json", False)],
         "call":        "port_notes_and_lists_initial_db(notes_src_json)",
     },
+    "device_actions": {
+        "json_vars":   [("device_actions_initial_db", "device_actions_src_json", False)],
+        "call":        "port_device_actions_db(device_actions_src_json)",
+    },
+    "generic_media": {
+        "json_vars":   [("media_library_initial_db", "generic_media_src_json", False)],
+        "call":        "port_generic_media_db(generic_media_src_json)",
+    },
+    "media_library": {
+        "json_vars":   [("media_library_initial_db", "generic_media_src_json", False)],
+        "call":        "port_generic_media_db(generic_media_src_json)",
+    },
 }
 
 # For FINAL DB injection we override the primary var to the service's own var
@@ -172,6 +206,11 @@ SELF_VAR_BY_SERVICE: Dict[str, Tuple[str, bool]] = {
     "clock":           ("clock_src_json",    False),
     "reminders":       ("reminders_src_json",False),
     "notes":           ("notes_src_json",    False),
+    "device_actions":  ("device_actions",    False),
+    "generic_media":   ("generic_media",    False),
+    "media_library":   ("generic_media",    False),
+
+
 }
 
 # Primary initial DB column per service
@@ -185,20 +224,9 @@ PRIMARY_INITIAL_DB_COL: Dict[str, str] = {
     "clock":           "clock_initial_db",
     "reminders":       "reminders_initial_db",
     "notes":           "notes_initial_db",
-}
-
-
-QUERY_CATEGORY_MAPPING: Dict[str, str] = {
-    "Retrieval + Actions": "RetrievalAndActions",
-    "Personal Content Retrieval": "PersonalContentRetrieval",
-    "Actions": "Actions",
-    "NEGATIVE - Actions": "NEGATIVEActions",
-    "NEGATIVE - Personal Content Retrieval": "NEGATIVEPersonalContentRetrieval",
-    "Public Content Retrieval": "PublicContentRetrieval",
-    "NEGATIVE - Public Content Retrieval": "NEGATIVEPublicContentRetrieval",
-    "NEGATIVE - Retrieval + Actions": "NEGATIVERetrievalAndActions",
-    "Visual Grounding + Retrieval/Actions": "VisualGroundingRetrievalAndActions",
-    "NEGATIVE - Visual Grounding + Retrieval/Actions": "NEGATIVEVisualGroundingRetrievalAndActions",
+    "device_actions":  "device_actions_initial_db",
+    "generic_media":  "generic_media_initial_db",
+    "media_library":  "media_library_initial_db",
 }
 
 
@@ -226,15 +254,27 @@ def auth_services():
 
 def normalize_service_token(tok: str) -> str:
     t = re.sub(r"[/&]", " ", str(tok).strip().lower()); t = re.sub(r"\s+", " ", t)
-    synonyms = {
-        "google calendar": "calendar", "calender": "calendar",
-        "google mail": "gmail", "email": "gmail", "e-mail": "gmail",
+   synonyms = {
+        "google calendar": "calendar",
+        "calender": "calendar",
+        "google mail": "gmail",
+        "email": "gmail",
+        "e-mail": "gmail",
         "media control": "media_control",
         "device settings": "device_settings",
-        "whatsapp message": "whatsapp", "whatsapp messages": "whatsapp",
-        "message": "whatsapp", "messages": "whatsapp",
-        "reminder": "reminders", "generic reminders": "reminders",
-        "notes and lists": "notes", "notes_and_lists": "notes",
+        "whatsapp message": "whatsapp",
+        "whatsapp messages": "whatsapp",
+        "message": "whatsapp",
+        "messages": "whatsapp",
+        "reminder": "reminders",
+        "generic reminders": "reminders",
+        "device actions": "device_actions",
+        "notes and lists": "notes",
+        "notes_and_lists": "notes",
+        "media_library": "media_library",
+        "media library": "media_library",
+        "generic_media": "generic_media",
+        "generic media": "generic_media",
     }
     return synonyms.get(t, t)
 

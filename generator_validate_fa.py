@@ -220,7 +220,7 @@ PRIMARY_INITIAL_DB_COL: Dict[str, str] = {
     "notes":           "notes_initial_db",
     "device_actions":  "device_actions_initial_db",
     "generic_media":  "generic_media_initial_db",
-    "media_library":  "generic_media_initial_db",
+    "media_library":  "media_library_initial_db",
 
 }
 

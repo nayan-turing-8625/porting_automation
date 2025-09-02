@@ -254,7 +254,7 @@ def auth_services():
 
 def normalize_service_token(tok: str) -> str:
     t = re.sub(r"[/&]", " ", str(tok).strip().lower()); t = re.sub(r"\s+", " ", t)
-   synonyms = {
+    synonyms = {
         "google calendar": "calendar",
         "calender": "calendar",
         "google mail": "gmail",

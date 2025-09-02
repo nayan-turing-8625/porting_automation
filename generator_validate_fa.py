@@ -180,11 +180,11 @@ PORTING_SPECS: Dict[str, Dict[str, Any]] = {
         "call":        "port_device_actions_db(device_actions_src_json)",
     },
     "generic_media": {
-        "json_vars":   [("generic_media_initial_db", "generic_media_src_json", False)],
+        "json_vars":   [("media_library_initial_db", "generic_media_src_json", False)],
         "call":        "port_generic_media_db(generic_media_src_json)",
     },
     "media_library": {
-        "json_vars":   [("generic_media_initial_db", "generic_media_src_json", False)],
+        "json_vars":   [("media_library_initial_db", "generic_media_src_json", False)],
         "call":        "port_generic_media_db(generic_media_src_json)",
     },
 }
@@ -221,7 +221,6 @@ PRIMARY_INITIAL_DB_COL: Dict[str, str] = {
     "device_actions":  "device_actions_initial_db",
     "generic_media":  "generic_media_initial_db",
     "media_library":  "media_library_initial_db",
-
 }
 
 # =========================

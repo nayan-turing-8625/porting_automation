@@ -1133,38 +1133,38 @@ def add_freezegun_block(L,query_date):
     return L
 
 def add_gemini_keys(L, public_tools):
-    # if public_tools:
-    if GEMINI_API_KEY and DEFAULT_GEMINI_MODEL_NAME and LIVE_API_URL:
-        # Add Gemini keys if only public tools are used
-        L.append("### Public Live Tools Env")
-        L.append("import os")
-        L.append(f"os.environ['GEMINI_API_KEY'] = '{GEMINI_API_KEY}'")
-        L.append(f"os.environ['GOOGLE_API_KEY'] = '{GEMINI_API_KEY}'")
-        L.append(f"os.environ['DEFAULT_GEMINI_MODEL_NAME'] = '{DEFAULT_GEMINI_MODEL_NAME}'")
-        L.append(f"os.environ['LIVE_API_URL'] = '{LIVE_API_URL}'")
-    else:
-        raise ValueError(
-            "Failed to generate templates. "
-            "Required `GEMINI_API_KEY` & `DEFAULT_GEMINI_MODEL_NAME` to use public tools."
-        )
+    if public_tools:
+        if GEMINI_API_KEY and DEFAULT_GEMINI_MODEL_NAME and LIVE_API_URL:
+            # Add Gemini keys if only public tools are used
+            L.append("### Public Live Tools Env")
+            L.append("import os")
+            L.append(f"os.environ['GEMINI_API_KEY'] = '{GEMINI_API_KEY}'")
+            L.append(f"os.environ['GOOGLE_API_KEY'] = '{GEMINI_API_KEY}'")
+            L.append(f"os.environ['DEFAULT_GEMINI_MODEL_NAME'] = '{DEFAULT_GEMINI_MODEL_NAME}'")
+            L.append(f"os.environ['LIVE_API_URL'] = '{LIVE_API_URL}'")
+        else:
+            raise ValueError(
+                "Failed to generate templates. "
+                "Required `GEMINI_API_KEY` & `DEFAULT_GEMINI_MODEL_NAME` to use public tools."
+            )
     return L
 
-# def add_gemini_keys(L, public_tools):
-#     if public_tools:
-#         if GEMINI_API_KEY and DEFAULT_GEMINI_MODEL_NAME and LIVE_API_URL:
-#             # Add Gemini keys if only public tools are used
-#             L.append("### Public Live Tools Env")
-#             L.append("import os")
-#             L.append(f"os.environ['GEMINI_API_KEY'] = '{GEMINI_API_KEY}'")
-#             L.append(f"os.environ['GOOGLE_API_KEY'] = '{GEMINI_API_KEY}'")
-#             L.append(f"os.environ['DEFAULT_GEMINI_MODEL_NAME'] = '{DEFAULT_GEMINI_MODEL_NAME}'")
-#             L.append(f"os.environ['LIVE_API_URL'] = '{LIVE_API_URL}'")
-#         else:
-#             raise ValueError(
-#                 "Failed to generate templates. "
-#                 "Required `GEMINI_API_KEY` & `DEFAULT_GEMINI_MODEL_NAME` to use public tools."
-#             )
-#     return L
+def add_gemini_keys(L, public_tools):
+    if public_tools:
+        if GEMINI_API_KEY and DEFAULT_GEMINI_MODEL_NAME and LIVE_API_URL:
+            # Add Gemini keys if only public tools are used
+            L.append("### Public Live Tools Env")
+            L.append("import os")
+            L.append(f"os.environ['GEMINI_API_KEY'] = '{GEMINI_API_KEY}'")
+            L.append(f"os.environ['GOOGLE_API_KEY'] = '{GEMINI_API_KEY}'")
+            L.append(f"os.environ['DEFAULT_GEMINI_MODEL_NAME'] = '{DEFAULT_GEMINI_MODEL_NAME}'")
+            L.append(f"os.environ['LIVE_API_URL'] = '{LIVE_API_URL}'")
+        else:
+            raise ValueError(
+                "Failed to generate templates. "
+                "Required `GEMINI_API_KEY` & `DEFAULT_GEMINI_MODEL_NAME` to use public tools."
+            )
+    return L
 
 
 # ---------- Parallel worker

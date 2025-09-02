@@ -249,18 +249,26 @@ def auth_services():
 def normalize_service_token(tok: str) -> str:
     t = re.sub(r"[/&]", " ", str(tok).strip().lower()); t = re.sub(r"\s+", " ", t)
     synonyms = {
-        "google calendar": "calendar", "calender": "calendar",
-        "google mail": "gmail", "email": "gmail", "e-mail": "gmail",
+        "google calendar": "calendar",
+        "calender": "calendar",
+        "google mail": "gmail",
+        "email": "gmail",
+        "e-mail": "gmail",
         "media control": "media_control",
         "device settings": "device_settings",
-        "whatsapp message": "whatsapp", "whatsapp messages": "whatsapp",
-        "message": "whatsapp", "messages": "whatsapp",
-        "reminder": "reminders", "generic reminders": "reminders",
+        "whatsapp message": "whatsapp",
+        "whatsapp messages": "whatsapp",
+        "message": "whatsapp",
+        "messages": "whatsapp",
+        "reminder": "reminders",
+        "generic reminders": "reminders",
         "device actions": "device_actions",
-        "notes and lists": "notes", "notes_and_lists": "notes",
-        "media_library": "generic_media", "generic_media":"generic_media",
-
-
+        "notes and lists": "notes",
+        "notes_and_lists": "notes",
+        "media_library": "generic_media",
+        "media library": "generic_media",
+        "generic_media": "generic_media",
+        "generic media": "generic_media",
     }
     return synonyms.get(t, t)
 

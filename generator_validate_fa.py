@@ -994,12 +994,11 @@ def generate_notebook_for_row_ws(
     user_loc = working_row.get("user_location", "")
     query_date = working_row.get("query_date", "").strip()
     uploaded_file_url = (working_row.get("video_prompt") or "").strip()
+
     # Parse public tools
     public_tools = _parse_public_tools(
         working_row.get("public_content_sources_used", "").strip()
     )
-
-
 
     # Process final services
     final_services = split_services(

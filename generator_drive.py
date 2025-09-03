@@ -117,7 +117,7 @@ def main():
 
     out_folder_id = resolve_output_folder_id(drive, OUT_HINT, CODEBASE_FOLDER_NAME)
     log.info("Output notebooks Drive folder id: %s", out_folder_id)
-    empty_drive_folder(drive, out_folder_id)
+    # empty_drive_folder(drive, out_folder_id)
 
     src_name = SOURCE_SHEET_NAME or get_first_sheet_title(sheets, SPREADSHEET_ID)
     log.info("Reading tasks from sheet '%s'", src_name)

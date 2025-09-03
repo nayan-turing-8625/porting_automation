@@ -437,6 +437,81 @@ def upload_notebook_to_drive_with_retries(folder_id: str, filename: str, nb: nbf
     if last_err: raise last_err
     raise RuntimeError("Unknown upload failure.")
 
+def upsert_notebook_to_drive(folder_id: str, filename: str, nb: nbformat.NotebookNode,
+                                    max_retries: int = 5, base_delay: float = 1.0) -> Tuple[str, str]:
+    """
+    Updates a notebook if it exists, otherwise creates it (upsert).
+    Retries on common Google API errors.
+    """
+    attempt = 0
+    last_err: Optional[Exception] = None
+
+    while attempt <= max_retries:
+        try:
+            drive = build("drive", "v3")  # Fresh service object per thread/retry
+            data = nbformat.writes(nb).encode("utf-8")
+            media = MediaInMemoryUpload(data, mimetype="application/vnd.google.colaboratory", resumable=True)
+
+            # 1. Search for an existing file with the same name in the folder
+            q = f"'{folder_id}' in parents and name='{filename}' and trashed=false"
+            # print('folder_id',folder_id)
+            # print('filename',filename)
+            response = drive.files().list(q=q, fields="files(id)").execute()
+            # print('response',response)
+            existing_files = response.get("files", [])
+            # print('existing_files',existing_files)
+
+            file_meta = {
+                "name": filename,
+                "mimeType": "application/vnd.google.colaboratory",
+            }
+
+            if existing_files:
+                # 2. If file exists, UPDATE it
+                file_id = existing_files[0]["id"]
+                log.info(f"Updating existing notebook: {filename} (ID: {file_id})")
+                # print(f"Updating existing notebook: {filename} (ID: {file_id})")
+                file = drive.files().update(
+                    fileId=file_id,
+                    media_body=media,
+                    fields="id,webViewLink"
+                ).execute()
+            else:
+                # 3. If file does not exist, CREATE it
+                log.info(f"Creating new notebook: {filename}")
+                # print(f"Creating new notebook: {filename}")
+                file_meta["parents"] = [folder_id]
+                file = drive.files().create(
+                    body=file_meta,
+                    media_body=media,
+                    fields="id,webViewLink"
+                ).execute()
+
+            file_id = file["id"]
+            colab_url = f"https://colab.research.google.com/drive/{file_id}"
+            return file_id, colab_url
+
+        except HttpError as e:
+            last_err = e
+            status = getattr(e.resp, "status", None)
+            if status in (403, 429, 500, 502, 503, 504):
+                sleep_s = base_delay * (2 ** attempt)
+                log.warning(f"Upsert retry {attempt + 1} for {filename} due to HTTP {status}; sleeping {sleep_s:.1f}s")
+                time.sleep(sleep_s)
+                attempt += 1
+                continue
+            raise  # Re-raise other HTTP errors
+        except Exception as e:
+            last_err = e
+            sleep_s = base_delay * (2 ** attempt)
+            log.warning(f"Upsert retry {attempt + 1} for {filename} after error: {e}; sleeping {sleep_s:.1f}s")
+            time.sleep(sleep_s)
+            attempt += 1
+
+    if last_err:
+        raise last_err
+    raise RuntimeError("Unknown notebook upsert failure.")
+
 # ---------- Sheets helpers
 def get_first_sheet_title(sheets, spreadsheet_id: str) -> str:
     meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
@@ -1134,7 +1209,8 @@ def build_and_upload_worker(
         )
         safe_name = re.sub(r"[\\/:*?\"<>|]+", "_", sample_id).strip() or f"row-{idx}"
         fname = f"{safe_name}.ipynb"
-        _, colab_url = upload_notebook_to_drive_with_retries(out_folder_id, fname, nb)
+        # _, colab_url = upload_notebook_to_drive_with_retries(out_folder_id, fname, nb)
+        _, colab_url = upsert_notebook_to_drive(out_folder_id, fname, nb)
         services_required_for_summary = (working_row.get("services_needed") or "").strip()
         return (idx, sample_id, task_id, services_required_for_summary, colab_url, issues, None)
     except Exception as e:
@@ -1158,7 +1234,7 @@ def main():
 
     out_folder_id = resolve_output_folder_id(drive, WS_OUT_FOLDER_NAME, CODEBASE_FOLDER_NAME)
     log.info("Output notebooks Drive folder id: %s", out_folder_id)
-    empty_drive_folder(drive, out_folder_id)
+    # empty_drive_folder(drive, out_folder_id)
 
     ws_name = SOURCE_WORKING_SHEET_NAME or get_first_sheet_title(sheets, SPREADSHEET_ID)
     log.info("Reading Working Sheet rows from '%s' (spreadsheet id: %s)", ws_name, SPREADSHEET_ID)

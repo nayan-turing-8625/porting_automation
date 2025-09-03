@@ -127,24 +127,6 @@ if all_present:
 else:
     print("\n❌ Setup failed! Not all required items were extracted.")
 
-# 7. Generate Schemas
-from Scripts.FCSpec import generate_package_schema
-
-print("\nGenerating FC Schemas")
-os.makedirs(FC_DIR, exist_ok=True)
-
-# Change working directory to the source folder
-os.chdir(APIS_DIR)
-
-# Iterate through the packages in the /content/APIs directory
-for package_name in os.listdir(APIS_DIR):
-    package_path = os.path.join(APIS_DIR, package_name)
-
-    # Check if it's a directory (to avoid processing files)
-    if os.path.isdir(package_path):
-        # Call the function to generate schema for the current package
-        generate_package_schema(package_path, output_folder_path=FC_DIR)
-# print(f"✅ Successfully generated {len(os.listdir(FC_DIR))} FC Schemas to {FC_DIR}")
 os.chdir(CONTENT_DIR)
 
 """

@@ -49,6 +49,12 @@ MYDRIVE_ROOT         = "/content/drive/MyDrive"
 CODEBASE_FOLDER_NAME = "port_automation"
 CODEBASE_ROOT        = os.path.join(MYDRIVE_ROOT, CODEBASE_FOLDER_NAME)
 
+
+
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+DEFAULT_GEMINI_MODEL_NAME = os.environ.get('DEFAULT_GEMINI_MODEL_NAME',"gemini-2.5-pro-preview-03-25")
+LIVE_API_URL = os.environ.get('LIVE_API_URL')
+
 # =========================
 # Logging
 # =========================
@@ -222,6 +228,7 @@ PRIMARY_INITIAL_DB_COL: Dict[str, str] = {
     "generic_media":  "generic_media_initial_db",
     "media_library":  "media_library_initial_db",
 }
+
 
 # =========================
 # Utils
@@ -602,7 +609,14 @@ def upsert_summary_sheet_ws(sheets, spreadsheet_id: str, sheet_name: str, rows: 
         sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": req}).execute()
 
 # ---------- Notebook builders
-def build_metadata_cell(sample_id: str, query_text: str, api_modules: List[str], query_date: str,public_tools:list[str]):
+def build_metadata_cell(
+    sample_id: str,
+    query_text: str,
+    api_modules: List[str],
+    query_date: str,
+    uploaded_file_url: str = "",
+    public_tools:list[str] = []
+):
     # Parse query_date similar to Freezegun logic: validate with dateutil.parser; if invalid, omit.
     dt_value = ""
     if query_date:
@@ -612,9 +626,18 @@ def build_metadata_cell(sample_id: str, query_text: str, api_modules: List[str],
         f"**Query**: {query_text or ''}\n\n",
         "**DB Type**: Base Case\n\n",
         "**Case Description**:\n\n",
+    ]
+
+    if uploaded_file_url:
+        md.append("```\n<additional_data>\n")
+        md.append(f'  <current_uploaded_file src="{uploaded_file_url}" />\n')
+        md.append("</additional_data>\n```\n\n")
+
+    md.extend([
         "**Global/Context Variables:**\n\n\n",
         "**Datetime Context Variables:**\n",
-    ]
+    ])
+
     if dt_value:
         md.append(f"- {dt_value}\n\n")
     else:
@@ -625,7 +648,9 @@ def build_metadata_cell(sample_id: str, query_text: str, api_modules: List[str],
     if public_tools:
         md += [f"- {p}\n" for p in public_tools]
     md.append("\n**Databases:**")
+
     return new_markdown_cell("".join(md))
+
 
 def build_warnings_cell(issues: Dict[str, Any]):
     msgs=[]
@@ -917,7 +942,6 @@ def preflight_row_ws(template_row: Dict[str, str], selected_services: List[str])
                 issues["json_errors"][col] = str(e)
     return {"expanded": expanded, "issues": issues}
 
-
 def _parse_public_tools(public_tools_str: str) -> list[str]:
     """
     Parse the 'public_content_sources_used' string into a normalized list of tool identifiers.
@@ -969,11 +993,13 @@ def generate_notebook_for_row_ws(
     query_txt = working_row.get("query", "").strip()
     user_loc = working_row.get("user_location", "")
     query_date = working_row.get("query_date", "").strip()
+    uploaded_file_url = (working_row.get("video_prompt") or "").strip()
 
     # Parse public tools
     public_tools = _parse_public_tools(
         working_row.get("public_content_sources_used", "").strip()
     )
+
     # Process final services
     final_services = split_services(
         working_row.get("final_state_changes_needed", "")
@@ -981,7 +1007,7 @@ def generate_notebook_for_row_ws(
 
 
     nb = new_notebook()
-    nb.cells.append(build_metadata_cell(sample_id, query_txt, api_modules, query_date,public_tools))
+    nb.cells.append(build_metadata_cell(sample_id, query_txt, api_modules, query_date,uploaded_file_url,public_tools))
     w = build_warnings_cell(issues)
     if w: nb.cells.append(w)
     nb.cells.append(new_markdown_cell("# Set Up"))
@@ -997,7 +1023,7 @@ def generate_notebook_for_row_ws(
             meta_map_initial=meta_map_initial,
             user_location_value=user_loc,
             query_date=query_date,
-            public_tools =public_tools
+            public_tools=public_tools
         )
     )
 
@@ -1069,7 +1095,6 @@ def add_freezegun_block(L,query_date):
 
     return L
 
-
 def add_gemini_keys(L, public_tools):
     if GEMINI_API_KEY and DEFAULT_GEMINI_MODEL_NAME and LIVE_API_URL:
         # Add Gemini keys if only public tools are used
@@ -1085,6 +1110,7 @@ def add_gemini_keys(L, public_tools):
             "Required `GEMINI_API_KEY` & `DEFAULT_GEMINI_MODEL_NAME` to use public tools."
         )
     return L
+
 
 
 # ---------- Parallel worker

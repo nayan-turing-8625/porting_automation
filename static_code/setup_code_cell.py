@@ -144,7 +144,7 @@ for package_name in os.listdir(APIS_DIR):
     if os.path.isdir(package_path):
         # Call the function to generate schema for the current package
         generate_package_schema(package_path, output_folder_path=FC_DIR)
-print(f"✅ Successfully generated {len(os.listdir(FC_DIR))} FC Schemas to {FC_DIR}")
+# print(f"✅ Successfully generated {len(os.listdir(FC_DIR))} FC Schemas to {FC_DIR}")
 os.chdir(CONTENT_DIR)
 
 """

@@ -714,7 +714,7 @@ def build_metadata_cell(
     ])
 
     if dt_value:
-        md.append(f"- {dt_value}\n\n")
+        md.append(f"- current_time =  {dt_value}\n\n")
     else:
         md.append("\n")  # keep structure even if empty
 

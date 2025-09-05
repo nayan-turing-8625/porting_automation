@@ -10,7 +10,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 # Version to download
-VERSION = "0.1.0" # Pass the version of the API
+VERSION = "0.1.1" # Pass the version of the API
 
 # Define paths
 CONTENT_DIR = '/content'

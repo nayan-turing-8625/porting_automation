@@ -24,7 +24,7 @@ ZIP_PATH = os.path.join(CONTENT_DIR, f'APIs_V{VERSION}.zip')
 APIS_FOLDER_ID = '1QpkAZxXhVFzIbm8qPGPRP1YqXEvJ4uD4'
 
 # List of items to extract from the zip file
-ITEMS_TO_EXTRACT = ['APIs/', 'DBs/', 'Scripts/']
+ITEMS_TO_EXTRACT = ['APIs/', 'DBs/', 'Scripts/', 'Schemas/']
 
 # Clean up existing directories and files
 for path in [APIS_DIR, DBS_DIR, SCRIPTS_DIR, FC_DIR, ZIP_PATH]:

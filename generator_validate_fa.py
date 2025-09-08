@@ -1005,9 +1005,7 @@ def build_golden_answer_cell(working_row: Dict[str, str]) -> nbformat.NotebookNo
     golden = (working_row.get("final_golden_response") or "").strip()
     if golden:
         content = "# Golden Answer\n\n " + golden
-    else:
-        content = "# Golden Answer\n\n"
-    return new_markdown_cell(content)
+        return new_markdown_cell(content)
 
 def build_empty_block(title: str):
     return [new_markdown_cell(f"# {title}"), new_code_cell("")]
@@ -1139,7 +1137,8 @@ def generate_notebook_for_row_ws(
     nb.cells.append(build_action_final_dbs_cell_ws(final_services, working_row, code_map_final, meta_map_final, template_row,public_tools))
 
     # Golden Answer (markdown) — right after Action, before Final Assertion
-    nb.cells.append(build_golden_answer_cell(working_row))
+    if golden_anwser := build_golden_answer_cell(working_row):
+        nb.cells.append(golden_anwser)
 
     nb.cells.append(new_markdown_cell("# Final Assertion"))
     nb.cells.append(build_final_assertion_cell(working_row))

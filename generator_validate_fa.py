@@ -1006,7 +1006,7 @@ def build_golden_answer_cell(working_row: Dict[str, str]) -> nbformat.NotebookNo
     if golden:
         content = "# Golden Answer\n\n " + golden
     else:
-        content = "# Golden Answer\n\n### (empty)"
+        content = "# Golden Answer\n\n"
     return new_markdown_cell(content)
 
 def build_empty_block(title: str):

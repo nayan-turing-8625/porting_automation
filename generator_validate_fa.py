@@ -132,6 +132,22 @@ QUERY_CATEGORY_MAPPING: Dict[str, str] = {
     "NEGATIVE - Visual Grounding + Retrieval/Actions": "NEGATIVEVisualGroundingRetrievalAndActions",
 }
 
+API_INITIAL_MODULE_CODE = {
+    "calendar": [
+        "from Scripts.porting.port_calendar import port_calendar",
+        "port_calendar(json.dumps(port_calender_db, ensure_ascii=False), \"/content/DBs/ported_db_initial_calendar.json\")",
+        "google_calendar.SimulationEngine.db.load_state(\"/content/DBs/ported_db_initial_calendar.json\")"
+    ]
+}
+
+API_FINAL_MODULE_CODE = {
+    "calendar": [
+        "from Scripts.porting.port_calendar import port_calendar",
+        "port_calendar(json.dumps(port_calender_db, ensure_ascii=False), \"/content/DBs/ported_db_final_calendar.json\")",
+        "google_calendar.SimulationEngine.db.load_state(\"/content/DBs/ported_db_final_calendar.json\")"
+    ]
+}
+
 
 # =========================
 # Porting specs (initial stage)
@@ -148,6 +164,7 @@ PORTING_SPECS: Dict[str, Dict[str, Any]] = {
         ],
         "call": "port_db_whatsapp_and_contacts(port_contact_db, port_whatsapp_db)",
     },
+
     "calendar": {
         "json_vars":   [("calendar_initial_db", "port_calender_db", True)],
         "call":        "port_calendar_db(json.dumps(port_calender_db, ensure_ascii=False))",
@@ -206,9 +223,9 @@ SELF_VAR_BY_SERVICE: Dict[str, Tuple[str, bool]] = {
     "clock":           ("clock_src_json",    False),
     "reminders":       ("reminders_src_json",False),
     "notes":           ("notes_src_json",    False),
-    "device_actions":  ("device_actions",    False),
-    "generic_media":   ("generic_media",    False),
-    "media_library":   ("generic_media",    False),
+    "device_actions":  ("device_actions_src_json",    False),
+    "generic_media":   ("generic_media_src_json",    False),
+    "media_library":   ("generic_media_src_json",    False),
 
 
 }
@@ -797,10 +814,12 @@ def build_import_and_port_cell_ws(
                 L += [f"# {var} from Template Colab → {col} (dict)", f"{var} = {py_literal(d)}", ""]
             else:
                 L += [f"# {var} from Template Colab → {col} (JSON string)", f"{var} = json.dumps({py_literal(d)}, ensure_ascii=False)", ""]
+        if svc_code_block := API_INITIAL_MODULE_CODE.get(svc):
+            L += svc_code_block
+            continue
 
         # Paste live code with meta line (initial)
-        code_str = code_map_initial.get(svc, "")
-        if code_str:
+        elif code_str := code_map_initial.get(svc, ""):
             code_str = reescape_newlines_inside_string_literals(code_str).strip()
             date_upd, resp = meta_map_initial.get(svc, ("", ""))
             L += [
@@ -877,7 +896,7 @@ def build_action_final_dbs_cell_ws(
         else:
             L += [f"# {var_name} from Working Sheet → {col} (JSON string)",
                   f"{var_name} = json.dumps({py_literal(d)}, ensure_ascii=False)", ""]
-
+      
         # --- WhatsApp-specific handling for contacts_src_json ---
         if svc == "whatsapp":
             contacts_final_col = final_db_col_for_service("contacts")  # 'contacts_final_db'
@@ -900,10 +919,11 @@ def build_action_final_dbs_cell_ws(
                     f"contacts_src_json = json.dumps({py_literal(contacts_dict)}, ensure_ascii=False)",
                     "",
                 ]
-
+        if svc_code_block := API_FINAL_MODULE_CODE.get(svc):
+            L += svc_code_block
+            continue
         # --- Append FINAL-DB porting function code (if any) ---
-        code_str = code_map_final.get(svc, "")
-        if code_str:
+        elif code_str := code_map_final.get(svc, ""):
             code_str = reescape_newlines_inside_string_literals(code_str).strip()
             date_upd, resp = meta_map_final.get(svc, ("", ""))
             L += [

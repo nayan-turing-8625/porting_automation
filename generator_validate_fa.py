@@ -221,10 +221,17 @@ PORTING_SPECS: Dict[str, Dict[str, Any]] = {
         "json_vars":   [("home_initial_db", "google_home_src_json", False)],
         "call":        "port_google_home_db(google_home_src_json)",
     },
-     "phone": {
-        "json_vars":   [("phone_initial_db", "phone_src_json", False)],
-        "call":        "port_phone_db(phone_src_json)",
-    },
+    "phone": {
+        "json_vars": [
+            ("contacts_initial_db", "contacts_src_json",  False),
+            ("phone_initial_db", "phone_src_json",  False),
+        ],
+        "pre_call_lines": [
+            "port_contact_db = contacts_src_json",
+            "port_phone_contacts_db = phone_src_json",
+        ],
+        "call": "port_phone_db(port_contact_db, port_phone_contacts_db)",
+    }
 }
 
 # For FINAL DB injection we override the primary var to the service's own var
@@ -928,9 +935,12 @@ def build_action_final_dbs_cell_ws(
         else:
             L += [f"# {var_name} from Working Sheet → {col} (JSON string)",
                   f"{var_name} = json.dumps({py_literal(d)}, ensure_ascii=False)", ""]
+
+
+      
       
         # --- WhatsApp-specific handling for contacts_src_json ---
-        if svc == "whatsapp":
+        if svc == "whatsapp" or svc == "phone":
             contacts_final_col = final_db_col_for_service("contacts")  # 'contacts_final_db'
             contacts_final_raw = (working_row.get(contacts_final_col) or "").strip()
             if contacts_final_raw:
@@ -1371,5 +1381,5 @@ def main():
     elapsed = time.time() - start
     log.info("Parallel generation complete in %.1fs with %d problem row(s).", elapsed, problems_cnt)
 
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()

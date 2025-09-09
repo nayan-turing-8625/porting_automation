@@ -982,7 +982,7 @@ def build_action_final_dbs_cell_ws(
         # Use SAME call as initial stage
         for ln in spec.get("pre_call_lines", []): L.append(ln)
         if spec.get("pre_call_lines"): L.append("")
-        if svc == "contacts" and "whatsapp" not in final_services_list
+        if svc == "contacts" and "whatsapp" not in final_services_list:
             calls.append(spec["call"])
     if calls:
         L += ["# Execute final porting"] + calls

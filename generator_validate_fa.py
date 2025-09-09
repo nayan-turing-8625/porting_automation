@@ -550,10 +550,17 @@ def read_sheet_as_dicts(sheets, spreadsheet_id: str, sheet_name: str) -> Tuple[L
 def compute_initial_services_from_template_row(template_row: Dict[str, str]) -> List[str]:
     selected: List[str] = []
     for svc, col in PRIMARY_INITIAL_DB_COL.items():
-        if str(template_row.get(col, "")).strip():
+        val = template_row.get(col, "")
+        _db = str(val).strip() if val is not None else ""
+
+        # Treat these as empty
+        if _db not in ("{}", "[]", "NA", "", "nan", "None"):
             selected.append(svc)
+
+    # Special case: drop contacts if whatsapp also selected
     if "whatsapp" in selected and "contacts" in selected:
         selected.remove("contacts")
+
     return selected
 
 def api_modules_for_services(services: List[str]) -> List[str]:

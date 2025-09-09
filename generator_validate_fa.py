@@ -210,6 +210,14 @@ PORTING_SPECS: Dict[str, Dict[str, Any]] = {
         "json_vars":   [("media_library_initial_db", "generic_media_src_json", False)],
         "call":        "port_generic_media_db(generic_media_src_json)",
     },
+     "google_home": {
+        "json_vars":   [("google_home_initial_db", "google_home_src_json", False)],
+        "call":        "port_google_home_db(google_home_src_json)",
+    },
+     "phone": {
+        "json_vars":   [("phone_initial_db", "phone_src_json", False)],
+        "call":        "port_phone_db(phone_src_json)",
+    },
 }
 
 # For FINAL DB injection we override the primary var to the service's own var
@@ -226,8 +234,8 @@ SELF_VAR_BY_SERVICE: Dict[str, Tuple[str, bool]] = {
     "device_actions":  ("device_actions_src_json",    False),
     "generic_media":   ("generic_media_src_json",    False),
     "media_library":   ("generic_media_src_json",    False),
-
-
+    "google_home":     ("google_home_src_json",    False),
+    "phone":           ("phone_src_json",    False),
 }
 
 # Primary initial DB column per service
@@ -244,6 +252,8 @@ PRIMARY_INITIAL_DB_COL: Dict[str, str] = {
     "device_actions":  "device_actions_initial_db",
     "generic_media":  "generic_media_initial_db",
     "media_library":  "media_library_initial_db",
+    "google_home":    "home_initial_db",
+    "phone":          "phone_initial_db",
 }
 
 
@@ -292,6 +302,9 @@ def normalize_service_token(tok: str) -> str:
         "media library": "media_library",
         "generic_media": "generic_media",
         "generic media": "generic_media",
+        "home": "google_home",
+        "google home": "google_home",
+        "phone": "phone",
     }
     return synonyms.get(t, t)
 

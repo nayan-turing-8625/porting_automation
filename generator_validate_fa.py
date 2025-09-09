@@ -97,6 +97,11 @@ DEFAULT_DB_PATHS: Dict[str, str] = {
     "device_actions":    "/content/DBs/DeviceActionsDefaultDB.json",
     "generic_media":    "/content/DBs/GenericMediaDefaultDB.json",
     "media_library":    "/content/DBs/GenericMediaDefaultDB.json",
+    "google_home":    "/content/DBs/GoogleHomeDefaultDB.json",
+    "home":    "/content/DBs/GoogleHomeDefaultDB.json",
+    "phone":    "/content/DBs/PhoneDefaultDB.json.json",
+
+
 
 }
 
@@ -116,7 +121,9 @@ SERVICE_SPECS: Dict[str, Dict[str, Any]] = {
     "device_actions":   {"api": "device_actions",    "requires": []},
     "generic_media":    {"api": "generic_media",    "requires": []},
     "media_library":    {"api": "generic_media",    "requires": []},
-
+    "google_home":      {"api": "google_home",    "requires": []},
+    "home":             {"api": "google_home",    "requires": []},
+    "phone":            {"api": "phone",    "requires": []},
 }
 
 QUERY_CATEGORY_MAPPING: Dict[str, str] = {
@@ -256,6 +263,11 @@ PRIMARY_INITIAL_DB_COL: Dict[str, str] = {
     "phone":          "phone_initial_db",
 }
 
+
+# Primary initial DB column per service
+PRIMARY_FINAL_DB_COL: Dict[str, str] = {
+    "google_home":    "home_final_db"
+}
 
 # =========================
 # Utils
@@ -860,7 +872,7 @@ def build_import_and_port_cell_ws(
 
 def final_db_col_for_service(svc: str) -> str:
     """Working Sheet FINAL DB column — '<service>_final_db'."""
-    return f"{svc}_final_db"
+    return PRIMARY_FINAL_DB_COL.get(svc,f"{svc}_final_db") 
 
 def build_action_final_dbs_cell_ws(
     final_services: List[str],

@@ -99,7 +99,7 @@ DEFAULT_DB_PATHS: Dict[str, str] = {
     "media_library":    "/content/DBs/GenericMediaDefaultDB.json",
     "google_home":    "/content/DBs/GoogleHomeDefaultDB.json",
     "home":    "/content/DBs/GoogleHomeDefaultDB.json",
-    "phone":    "/content/DBs/PhoneDefaultDB.json.json",
+    "phone":    "/content/DBs/PhoneDefaultDB.json",
 
 
 

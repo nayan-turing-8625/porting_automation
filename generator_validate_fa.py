@@ -230,7 +230,7 @@ PORTING_SPECS: Dict[str, Dict[str, Any]] = {
             "port_contact_db = contacts_src_json",
             "port_phone_contacts_db = phone_src_json",
         ],
-        "call": "port_phone_db(port_contact_db, port_phone_contacts_db)",
+        "call": "port_phone_db(port_phone_contacts_db,port_contact_db)",
     }
 }
 

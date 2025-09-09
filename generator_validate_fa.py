@@ -333,6 +333,7 @@ def split_services(cell: Optional[str]) -> List[str]:
     out, seen = [], set()
     for tok in tokens:
         name = normalize_service_token(tok)
+
         if name and name not in seen:
             out.append(name); seen.add(name)
     return out
@@ -839,6 +840,7 @@ def build_import_and_port_cell_ws(
 
     for svc in services_for_code:
         spec = PORTING_SPECS.get(svc)
+
         if not spec:
             L += [f"# (No porting spec defined for '{svc}'; skipping)", ""]
             continue
@@ -913,7 +915,7 @@ def build_action_final_dbs_cell_ws(
     if not final_services:
         L += ["# No final state changes requested for this task.", ""]
         return new_code_cell("\n".join(L) + "\n")
-
+    final_services_list = [normalize_service_token(svc_raw) for svc_raw in final_services]
     for svc_raw in final_services:
         svc = normalize_service_token(svc_raw)
         spec = PORTING_SPECS.get(svc)
@@ -980,8 +982,8 @@ def build_action_final_dbs_cell_ws(
         # Use SAME call as initial stage
         for ln in spec.get("pre_call_lines", []): L.append(ln)
         if spec.get("pre_call_lines"): L.append("")
-        calls.append(spec["call"])
-
+        if svc == "contacts" and "whatsapp" not in final_services_list
+            calls.append(spec["call"])
     if calls:
         L += ["# Execute final porting"] + calls
     return new_code_cell("\n".join(L) + "\n")

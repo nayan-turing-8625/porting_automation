@@ -211,7 +211,7 @@ PORTING_SPECS: Dict[str, Dict[str, Any]] = {
         "call":        "port_generic_media_db(generic_media_src_json)",
     },
      "google_home": {
-        "json_vars":   [("google_home_initial_db", "google_home_src_json", False)],
+        "json_vars":   [("home_initial_db", "google_home_src_json", False)],
         "call":        "port_google_home_db(google_home_src_json)",
     },
      "phone": {

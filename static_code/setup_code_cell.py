@@ -10,7 +10,8 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 # Version to download
-VERSION = "0.1.1" # Pass the version of the API
+
+VERSION = "0.1.2" # Pass the version of the API
 
 # Define paths
 CONTENT_DIR = '/content'
@@ -126,7 +127,7 @@ if all_present:
     print(f"\n✅ Setup complete! Required items extracted to {CONTENT_DIR}.")
 else:
     print("\n❌ Setup failed! Not all required items were extracted.")
-    
+
 os.chdir(CONTENT_DIR)
 
 """

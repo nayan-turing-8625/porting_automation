@@ -97,6 +97,11 @@ DEFAULT_DB_PATHS: Dict[str, str] = {
     "device_actions":    "/content/DBs/DeviceActionsDefaultDB.json",
     "generic_media":    "/content/DBs/GenericMediaDefaultDB.json",
     "media_library":    "/content/DBs/GenericMediaDefaultDB.json",
+    "google_home":    "/content/DBs/GoogleHomeDefaultDB.json",
+    "home":    "/content/DBs/GoogleHomeDefaultDB.json",
+    "phone":    "/content/DBs/PhoneDefaultDB.json",
+
+
 
 }
 
@@ -116,7 +121,9 @@ SERVICE_SPECS: Dict[str, Dict[str, Any]] = {
     "device_actions":   {"api": "device_actions",    "requires": []},
     "generic_media":    {"api": "generic_media",    "requires": []},
     "media_library":    {"api": "generic_media",    "requires": []},
-
+    "google_home":      {"api": "google_home",    "requires": []},
+    "home":             {"api": "google_home",    "requires": []},
+    "phone":            {"api": "phone",    "requires": []},
 }
 
 QUERY_CATEGORY_MAPPING: Dict[str, str] = {
@@ -130,6 +137,22 @@ QUERY_CATEGORY_MAPPING: Dict[str, str] = {
     "NEGATIVE - Retrieval + Actions": "NEGATIVERetrievalAndActions",
     "Visual Grounding + Retrieval/Actions": "VisualGroundingRetrievalAndActions",
     "NEGATIVE - Visual Grounding + Retrieval/Actions": "NEGATIVEVisualGroundingRetrievalAndActions",
+}
+
+API_INITIAL_MODULE_CODE = {
+    "calendar": [
+        "from Scripts.porting.port_calendar import port_calendar",
+        "port_calendar(json.dumps(port_calender_db, ensure_ascii=False), \"/content/DBs/ported_db_initial_calendar.json\")",
+        "google_calendar.SimulationEngine.db.load_state(\"/content/DBs/ported_db_initial_calendar.json\")"
+    ]
+}
+
+API_FINAL_MODULE_CODE = {
+    "calendar": [
+        "from Scripts.porting.port_calendar import port_calendar",
+        "port_calendar(json.dumps(port_calender_db, ensure_ascii=False), \"/content/DBs/ported_db_final_calendar.json\")",
+        "google_calendar.SimulationEngine.db.load_state(\"/content/DBs/ported_db_final_calendar.json\")"
+    ]
 }
 
 
@@ -148,6 +171,7 @@ PORTING_SPECS: Dict[str, Dict[str, Any]] = {
         ],
         "call": "port_db_whatsapp_and_contacts(port_contact_db, port_whatsapp_db)",
     },
+
     "calendar": {
         "json_vars":   [("calendar_initial_db", "port_calender_db", True)],
         "call":        "port_calendar_db(json.dumps(port_calender_db, ensure_ascii=False))",
@@ -193,6 +217,21 @@ PORTING_SPECS: Dict[str, Dict[str, Any]] = {
         "json_vars":   [("media_library_initial_db", "generic_media_src_json", False)],
         "call":        "port_generic_media_db(generic_media_src_json)",
     },
+     "google_home": {
+        "json_vars":   [("home_initial_db", "google_home_src_json", False)],
+        "call":        "port_google_home_db(google_home_src_json)",
+    },
+    "phone": {
+        "json_vars": [
+            ("contacts_initial_db", "contacts_src_json",  False),
+            ("phone_initial_db", "phone_src_json",  False),
+        ],
+        "pre_call_lines": [
+            "port_contact_db = contacts_src_json",
+            "port_phone_contacts_db = phone_src_json",
+        ],
+        "call": "port_phone_db(port_phone_contacts_db,port_contact_db)",
+    }
 }
 
 # For FINAL DB injection we override the primary var to the service's own var
@@ -206,11 +245,11 @@ SELF_VAR_BY_SERVICE: Dict[str, Tuple[str, bool]] = {
     "clock":           ("clock_src_json",    False),
     "reminders":       ("reminders_src_json",False),
     "notes":           ("notes_src_json",    False),
-    "device_actions":  ("device_actions",    False),
-    "generic_media":   ("generic_media",    False),
-    "media_library":   ("generic_media",    False),
-
-
+    "device_actions":  ("device_actions_src_json",    False),
+    "generic_media":   ("generic_media_src_json",    False),
+    "media_library":   ("generic_media_src_json",    False),
+    "google_home":     ("google_home_src_json",    False),
+    "phone":           ("phone_src_json",    False),
 }
 
 # Primary initial DB column per service
@@ -227,8 +266,15 @@ PRIMARY_INITIAL_DB_COL: Dict[str, str] = {
     "device_actions":  "device_actions_initial_db",
     "generic_media":  "generic_media_initial_db",
     "media_library":  "media_library_initial_db",
+    "google_home":    "home_initial_db",
+    "phone":          "phone_initial_db",
 }
 
+
+# Primary initial DB column per service
+PRIMARY_FINAL_DB_COL: Dict[str, str] = {
+    "google_home":    "home_final_db"
+}
 
 # =========================
 # Utils
@@ -275,6 +321,9 @@ def normalize_service_token(tok: str) -> str:
         "media library": "media_library",
         "generic_media": "generic_media",
         "generic media": "generic_media",
+        "home": "google_home",
+        "google home": "google_home",
+        "phone": "phone",
     }
     return synonyms.get(t, t)
 
@@ -284,6 +333,7 @@ def split_services(cell: Optional[str]) -> List[str]:
     out, seen = [], set()
     for tok in tokens:
         name = normalize_service_token(tok)
+
         if name and name not in seen:
             out.append(name); seen.add(name)
     return out
@@ -437,6 +487,81 @@ def upload_notebook_to_drive_with_retries(folder_id: str, filename: str, nb: nbf
     if last_err: raise last_err
     raise RuntimeError("Unknown upload failure.")
 
+def upsert_notebook_to_drive(folder_id: str, filename: str, nb: nbformat.NotebookNode,
+                                    max_retries: int = 5, base_delay: float = 1.0) -> Tuple[str, str]:
+    """
+    Updates a notebook if it exists, otherwise creates it (upsert).
+    Retries on common Google API errors.
+    """
+    attempt = 0
+    last_err: Optional[Exception] = None
+
+    while attempt <= max_retries:
+        try:
+            drive = build("drive", "v3")  # Fresh service object per thread/retry
+            data = nbformat.writes(nb).encode("utf-8")
+            media = MediaInMemoryUpload(data, mimetype="application/vnd.google.colaboratory", resumable=True)
+
+            # 1. Search for an existing file with the same name in the folder
+            q = f"'{folder_id}' in parents and name='{filename}' and trashed=false"
+            # print('folder_id',folder_id)
+            # print('filename',filename)
+            response = drive.files().list(q=q, fields="files(id)").execute()
+            # print('response',response)
+            existing_files = response.get("files", [])
+            # print('existing_files',existing_files)
+
+            file_meta = {
+                "name": filename,
+                "mimeType": "application/vnd.google.colaboratory",
+            }
+
+            if existing_files:
+                # 2. If file exists, UPDATE it
+                file_id = existing_files[0]["id"]
+                log.info(f"Updating existing notebook: {filename} (ID: {file_id})")
+                # print(f"Updating existing notebook: {filename} (ID: {file_id})")
+                file = drive.files().update(
+                    fileId=file_id,
+                    media_body=media,
+                    fields="id,webViewLink"
+                ).execute()
+            else:
+                # 3. If file does not exist, CREATE it
+                log.info(f"Creating new notebook: {filename}")
+                # print(f"Creating new notebook: {filename}")
+                file_meta["parents"] = [folder_id]
+                file = drive.files().create(
+                    body=file_meta,
+                    media_body=media,
+                    fields="id,webViewLink"
+                ).execute()
+
+            file_id = file["id"]
+            colab_url = f"https://colab.research.google.com/drive/{file_id}"
+            return file_id, colab_url
+
+        except HttpError as e:
+            last_err = e
+            status = getattr(e.resp, "status", None)
+            if status in (403, 429, 500, 502, 503, 504):
+                sleep_s = base_delay * (2 ** attempt)
+                log.warning(f"Upsert retry {attempt + 1} for {filename} due to HTTP {status}; sleeping {sleep_s:.1f}s")
+                time.sleep(sleep_s)
+                attempt += 1
+                continue
+            raise  # Re-raise other HTTP errors
+        except Exception as e:
+            last_err = e
+            sleep_s = base_delay * (2 ** attempt)
+            log.warning(f"Upsert retry {attempt + 1} for {filename} after error: {e}; sleeping {sleep_s:.1f}s")
+            time.sleep(sleep_s)
+            attempt += 1
+
+    if last_err:
+        raise last_err
+    raise RuntimeError("Unknown notebook upsert failure.")
+
 # ---------- Sheets helpers
 def get_first_sheet_title(sheets, spreadsheet_id: str) -> str:
     meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
@@ -458,10 +583,17 @@ def read_sheet_as_dicts(sheets, spreadsheet_id: str, sheet_name: str) -> Tuple[L
 def compute_initial_services_from_template_row(template_row: Dict[str, str]) -> List[str]:
     selected: List[str] = []
     for svc, col in PRIMARY_INITIAL_DB_COL.items():
-        if str(template_row.get(col, "")).strip():
+        val = template_row.get(col, "")
+        _db = str(val).strip() if val is not None else ""
+
+        # Treat these as empty
+        if _db not in ("{}", "[]", "NA", "", "nan", "None"):
             selected.append(svc)
+
+    # Special case: drop contacts if whatsapp also selected
     if "whatsapp" in selected and "contacts" in selected:
         selected.remove("contacts")
+
     return selected
 
 def api_modules_for_services(services: List[str]) -> List[str]:
@@ -709,6 +841,7 @@ def build_import_and_port_cell_ws(
 
     for svc in services_for_code:
         spec = PORTING_SPECS.get(svc)
+
         if not spec:
             L += [f"# (No porting spec defined for '{svc}'; skipping)", ""]
             continue
@@ -723,10 +856,12 @@ def build_import_and_port_cell_ws(
                 L += [f"# {var} from Template Colab → {col} (dict)", f"{var} = {py_literal(d)}", ""]
             else:
                 L += [f"# {var} from Template Colab → {col} (JSON string)", f"{var} = json.dumps({py_literal(d)}, ensure_ascii=False)", ""]
+        if svc_code_block := API_INITIAL_MODULE_CODE.get(svc):
+            L += svc_code_block
+            continue
 
         # Paste live code with meta line (initial)
-        code_str = code_map_initial.get(svc, "")
-        if code_str:
+        elif code_str := code_map_initial.get(svc, ""):
             code_str = reescape_newlines_inside_string_literals(code_str).strip()
             date_upd, resp = meta_map_initial.get(svc, ("", ""))
             L += [
@@ -747,7 +882,7 @@ def build_import_and_port_cell_ws(
 
 def final_db_col_for_service(svc: str) -> str:
     """Working Sheet FINAL DB column — '<service>_final_db'."""
-    return f"{svc}_final_db"
+    return PRIMARY_FINAL_DB_COL.get(svc,f"{svc}_final_db") 
 
 def build_action_final_dbs_cell_ws(
     final_services: List[str],
@@ -781,7 +916,7 @@ def build_action_final_dbs_cell_ws(
     if not final_services:
         L += ["# No final state changes requested for this task.", ""]
         return new_code_cell("\n".join(L) + "\n")
-
+    final_services_list = [normalize_service_token(svc_raw) for svc_raw in final_services]
     for svc_raw in final_services:
         svc = normalize_service_token(svc_raw)
         spec = PORTING_SPECS.get(svc)
@@ -804,8 +939,11 @@ def build_action_final_dbs_cell_ws(
             L += [f"# {var_name} from Working Sheet → {col} (JSON string)",
                   f"{var_name} = json.dumps({py_literal(d)}, ensure_ascii=False)", ""]
 
+
+      
+      
         # --- WhatsApp-specific handling for contacts_src_json ---
-        if svc == "whatsapp":
+        if svc == "whatsapp" or svc == "phone":
             contacts_final_col = final_db_col_for_service("contacts")  # 'contacts_final_db'
             contacts_final_raw = (working_row.get(contacts_final_col) or "").strip()
             if contacts_final_raw:
@@ -826,10 +964,11 @@ def build_action_final_dbs_cell_ws(
                     f"contacts_src_json = json.dumps({py_literal(contacts_dict)}, ensure_ascii=False)",
                     "",
                 ]
-
+        if svc_code_block := API_FINAL_MODULE_CODE.get(svc):
+            L += svc_code_block
+            continue
         # --- Append FINAL-DB porting function code (if any) ---
-        code_str = code_map_final.get(svc, "")
-        if code_str:
+        elif code_str := code_map_final.get(svc, ""):
             code_str = reescape_newlines_inside_string_literals(code_str).strip()
             date_upd, resp = meta_map_final.get(svc, ("", ""))
             L += [
@@ -844,8 +983,10 @@ def build_action_final_dbs_cell_ws(
         # Use SAME call as initial stage
         for ln in spec.get("pre_call_lines", []): L.append(ln)
         if spec.get("pre_call_lines"): L.append("")
-        calls.append(spec["call"])
-
+        if svc == "contacts" and "whatsapp"  in final_services_list:
+            ...
+        else:
+            calls.append(spec["call"])
     if calls:
         L += ["# Execute final porting"] + calls
     return new_code_cell("\n".join(L) + "\n")
@@ -911,9 +1052,7 @@ def build_golden_answer_cell(working_row: Dict[str, str]) -> nbformat.NotebookNo
     golden = (working_row.get("final_golden_response") or "").strip()
     if golden:
         content = "# Golden Answer\n\n " + golden
-    else:
-        content = "# Golden Answer\n\n### (empty)"
-    return new_markdown_cell(content)
+        return new_markdown_cell(content)
 
 def build_empty_block(title: str):
     return [new_markdown_cell(f"# {title}"), new_code_cell("")]
@@ -1045,7 +1184,8 @@ def generate_notebook_for_row_ws(
     nb.cells.append(build_action_final_dbs_cell_ws(final_services, working_row, code_map_final, meta_map_final, template_row,public_tools))
 
     # Golden Answer (markdown) — right after Action, before Final Assertion
-    nb.cells.append(build_golden_answer_cell(working_row))
+    if golden_anwser := build_golden_answer_cell(working_row):
+        nb.cells.append(golden_anwser)
 
     nb.cells.append(new_markdown_cell("# Final Assertion"))
     nb.cells.append(build_final_assertion_cell(working_row))
@@ -1135,7 +1275,8 @@ def build_and_upload_worker(
         )
         safe_name = re.sub(r"[\\/:*?\"<>|]+", "_", sample_id).strip() or f"row-{idx}"
         fname = f"{safe_name}.ipynb"
-        _, colab_url = upload_notebook_to_drive_with_retries(out_folder_id, fname, nb)
+        # _, colab_url = upload_notebook_to_drive_with_retries(out_folder_id, fname, nb)
+        _, colab_url = upsert_notebook_to_drive(out_folder_id, fname, nb)
         services_required_for_summary = (working_row.get("services_needed") or "").strip()
         return (idx, sample_id, task_id, services_required_for_summary, colab_url, issues, None)
     except Exception as e:
@@ -1159,7 +1300,7 @@ def main():
 
     out_folder_id = resolve_output_folder_id(drive, WS_OUT_FOLDER_NAME, CODEBASE_FOLDER_NAME)
     log.info("Output notebooks Drive folder id: %s", out_folder_id)
-    empty_drive_folder(drive, out_folder_id)
+    # empty_drive_folder(drive, out_folder_id)
 
     ws_name = SOURCE_WORKING_SHEET_NAME or get_first_sheet_title(sheets, SPREADSHEET_ID)
     log.info("Reading Working Sheet rows from '%s' (spreadsheet id: %s)", ws_name, SPREADSHEET_ID)

@@ -784,6 +784,7 @@ def build_metadata_cell(
     return new_markdown_cell("".join(md))
 
 
+
 def build_warnings_cell(issues: Dict[str, Any]):
     msgs=[]
     if issues["unknown_services"]: msgs.append(f"- Unknown/unsupported services: `{', '.join(issues['unknown_services'])}`")

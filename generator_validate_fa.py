@@ -815,7 +815,7 @@ def build_import_and_port_cell_ws(
     L: List[str] = []
     L.append("# Imports")
     L = add_gemini_keys(L,public_tools)
-    # L = add_freezegun_block(L,query_date)
+    L = add_freezegun_block(L,query_date)
     for m in api_modules: L.append(f"import {m}")
     for m in public_tools or []: L.append(f"import {m}")
     if "notes_and_lists" in api_modules:

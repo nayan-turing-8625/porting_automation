@@ -1203,6 +1203,7 @@ def add_freezegun_block(L,query_date):
         return L
 
     # verify the query_date is in valid format 
+    query_date = query_date.replace("*",'').replace("-","").strip()
     try:
         parser.parse(query_date)
     except Exception as e:

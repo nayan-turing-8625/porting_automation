@@ -11,7 +11,7 @@ from googleapiclient.http import MediaIoBaseDownload
 
 # Version to download
 
-VERSION = "0.1.2" # Pass the version of the API
+VERSION = "0.1.3" # Pass the version of the API
 
 # Define paths
 CONTENT_DIR = '/content'
